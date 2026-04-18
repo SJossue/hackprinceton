@@ -40,6 +40,23 @@ K2_ENDPOINT = os.getenv("K2_ENDPOINT", "")
 K2_API_KEY = os.getenv("K2_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+
+def k2_configured() -> bool:
+    """True when K2_ENDPOINT + K2_API_KEY look like real values.
+
+    Guards against the common footgun where someone copies .env.example
+    into .env and leaves the placeholder values (``...``) intact — without
+    this check, the truthy non-empty strings would make the backend think
+    K2 is primary, route every query through it, and fast-fail on every
+    request. The banner + /health + /query routing would all lie about
+    what model is actually answering.
+    """
+    if not (K2_ENDPOINT and K2_API_KEY):
+        return False
+    if "..." in K2_ENDPOINT or "..." in K2_API_KEY:
+        return False
+    return True
+
 CLAUDE_MODEL = "claude-opus-4-7"
 K2_MODEL = "k2-think-v2"
 
@@ -171,7 +188,7 @@ def _validate_answer(obj: dict) -> dict:
 
 def call_k2(log_text: str, question: str) -> dict | None:
     """K2 Think V2 primary path. Returns None on any failure so the caller falls back."""
-    if not (K2_ENDPOINT and K2_API_KEY):
+    if not k2_configured():
         return None
     try:
         r = httpx.post(

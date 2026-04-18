@@ -82,6 +82,7 @@ def _db_event_count() -> int:
 
 
 def _status() -> dict[str, Any]:
+    k2_on = query_mod.k2_configured()
     return {
         "ok": True,
         "db": {
@@ -91,8 +92,8 @@ def _status() -> dict[str, Any]:
         },
         "llm": {
             "claude": bool(query_mod.ANTHROPIC_API_KEY),
-            "k2": bool(query_mod.K2_ENDPOINT and query_mod.K2_API_KEY),
-            "primary": "k2" if query_mod.K2_ENDPOINT and query_mod.K2_API_KEY else "claude",
+            "k2": k2_on,
+            "primary": "k2" if k2_on else "claude",
         },
         "websocket_clients": len(connected_clients),
     }
@@ -108,7 +109,7 @@ async def _banner() -> None:
         "┌─ Rewind backend ─────────────────────────────────────",
         f"│  DB:     {'✓' if db['exists'] else '✗'}  {db['path']}  (events: {db['event_count']})",
         f"│  Claude: {'✓' if llm['claude'] else '✗'}  model={query_mod.CLAUDE_MODEL}",
-        f"│  K2:     {'✓' if llm['k2'] else '✗'}  endpoint={query_mod.K2_ENDPOINT or '(unset)'}",
+        f"│  K2:     {'✓' if llm['k2'] else '✗'}  endpoint={query_mod.K2_ENDPOINT if llm['k2'] else '(unset)'}",
         f"│  Primary LLM: {llm['primary']}",
         "│  Docs: http://localhost:8000/docs",
         "└───────────────────────────────────────────────────────",
