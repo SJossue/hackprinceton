@@ -51,10 +51,11 @@ Use `date +'%Y-%m-%d %H:%M'` for copy-paste timestamps.
   - older: "3 days ago"
   Keep the absolute timestamp in the event alongside the relative one (`ts_relative` + `ts_absolute`) and let the model pick based on context — use absolute when specificity matters clinically (e.g., "8:02 AM" for medication timing), relative otherwise.
 
-## 2026-04-18 02:43 · stand-in labels surfacing
+## ✅ 2026-04-18 02:43 · stand-in labels surfacing — *addressed*
 - **Question:** What objects have been picked up today?
 - **Answer:**   "Today I saw two items picked up: the scissors at 5:42 PM and the remote at 10:42 PM."
 - **Model:**    claude-opus-4-7
 - **What felt wrong:** Raw CV vocabulary (`scissors`, `remote`) leaks into the user-facing sentence. A roommate would say "your pill bottle" and "your keys," not the COCO labels we use as stand-ins because YOLO's vocabulary is missing those classes. This is not a prompt problem — it's a data-pipeline problem wearing a prompt problem's clothes.
 - **Ideal-ish:** "Today you picked up your pill bottle around 5:42 PM and your keys around 10:42 PM."
 - **Fix hypothesis:** **Translation layer in context assembly, not prompt instruction.** Add a `DISPLAY_LABELS: dict[str, str]` in `query.py` that rewrites the `object` field before events reach the LLM (`scissors → pill bottle`, `remote → keys`, `cup → water glass`). Deterministic, cheaper than prompting, invisible to the model. The CV layer's vocabulary is a technical reality; the user never needs to know about it. Translate at the seam between CV and language — do NOT rewrite labels at the ingestion layer (that would break the schema contract with `capture.py`), only at the query-context assembly layer.
+- **Addressed:** `DISPLAY_LABELS` dict + `_display_label()` helper wired through `format_log()` in `query.py`. Verified end-to-end against the three mock events using `scissors`/`remote`: answers now say "pill bottle" and "keys" in both the context passed to the LLM and the user-facing `answer` string. `drinking_cup` (compound action token) left untranslated — different taxonomy, out of scope for this entry.

@@ -135,11 +135,33 @@ def _mock_events() -> list[EventRow]:
     ]
 
 
+# Translation layer between CV labels and user-facing names.
+# The CV pipeline is stuck with COCO's vocabulary, which is missing the things
+# we actually demo (keys, pill bottle). Sunghoo picked visually-similar COCO
+# classes as stand-ins. Translating here — at the query-context assembly seam,
+# AFTER capture.py's schema and BEFORE events reach the LLM — means the CV
+# contract stays stable and the user never hears "scissors" in an answer about
+# their medication.
+#
+# Do NOT rewrite labels at the ingestion layer (that would violate the
+# capture.py ⇄ rewind.db ⇄ backend contract). Translate at the seam only.
+DISPLAY_LABELS: dict[str, str] = {
+    "scissors":  "pill bottle",
+    "remote":    "keys",
+    "cup":       "water glass",
+}
+
+
+def _display_label(raw: str) -> str:
+    return DISPLAY_LABELS.get(raw, raw)
+
+
 def format_log(events: list[EventRow]) -> str:
     lines = []
     for e in events:
         tstr = datetime.fromtimestamp(e.ts).strftime("%H:%M:%S")
-        lines.append(f"[id={e.id}] [{tstr}] {e.event_type}: {e.object}")
+        obj = _display_label(e.object)
+        lines.append(f"[id={e.id}] [{tstr}] {e.event_type}: {obj}")
     return "\n".join(lines)
 
 
