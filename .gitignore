@@ -24,6 +24,9 @@ thumbs/
 *.log
 backend/queries.jsonl
 
+# ElevenLabs-generated MP3s (never committed — regenerated per-answer at runtime)
+backend/audio/
+
 # OS / IDE
 .DS_Store
 Thumbs.db
