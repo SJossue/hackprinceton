@@ -93,14 +93,22 @@ class EventRow:
     ts: float
     event_type: str
     object: str
+    # Spatial grounding — e.g. "the desk". None when capture.py didn't
+    # resolve a surface, or when reading from a pre-spatial rewind.db.
+    location: str | None = None
 
 
 def load_recent_events(db_path: Path = DB_PATH, limit: int = RECENT_EVENTS_LIMIT) -> list[EventRow]:
     if not db_path.exists():
         return _mock_events()
     conn = sqlite3.connect(db_path)
+    # Pre-spatial rewind.db files don't have a `location` column yet; select
+    # NULL in that slot so the EventRow tuple shape is stable.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    loc_col = "location" if "location" in cols else "NULL"
     rows = conn.execute(
-        "SELECT id, ts, event_type, object FROM events ORDER BY ts DESC LIMIT ?",
+        f"SELECT id, ts, event_type, object, {loc_col} FROM events "
+        f"ORDER BY ts DESC LIMIT ?",
         (limit,),
     ).fetchall()
     conn.close()
@@ -201,6 +209,11 @@ def format_log(events: list[EventRow]) -> str:
     timestamp (for clinical specificity, e.g. medication timing) and a
     relative phrase (for natural spoken answers). The prompt leaves the
     choice to the model.
+
+    Spatial grounding: when ``location`` is present (e.g. "the desk"),
+    append "on the desk" to the line so the model can cite where an object
+    was placed or picked up. Location is only meaningful for object events
+    — never rendered on person/action events.
     """
     lines = []
     now = datetime.now().timestamp()
@@ -208,7 +221,8 @@ def format_log(events: list[EventRow]) -> str:
         tstr = datetime.fromtimestamp(e.ts).strftime("%H:%M:%S")
         rel  = humanize_timestamp(e.ts, now)
         obj  = _display_label(e.object)
-        lines.append(f"[id={e.id}] [{tstr} · {rel}] {e.event_type}: {obj}")
+        loc  = f" on {e.location}" if e.location else ""
+        lines.append(f"[id={e.id}] [{tstr} · {rel}] {e.event_type}: {obj}{loc}")
     return "\n".join(lines)
 
 

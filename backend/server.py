@@ -71,6 +71,11 @@ class EventIn(BaseModel):
     object: str
     track_id: int | None = None
     thumb_path: str | None = None
+    # Spatial grounding — pi/capture.py resolves the surface an object is
+    # resting on (e.g. "the desk", "the chair") and ships it here. None
+    # when the event doesn't involve a surface (person events, first-run
+    # captures before the SURFACES dict was populated, etc.).
+    location: str | None = None
 
 
 def _db_event_count() -> int:
@@ -133,9 +138,12 @@ def get_events(limit: int = 80) -> list[dict[str, Any]]:
         return []
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Guard: older capture.py schemas pre-date the `location` column.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    loc_col = "location" if "location" in cols else "NULL AS location"
     rows = conn.execute(
-        "SELECT id, ts, event_type, object, track_id, thumb_path FROM events "
-        "ORDER BY ts DESC LIMIT ?",
+        f"SELECT id, ts, event_type, object, track_id, thumb_path, {loc_col} "
+        f"FROM events ORDER BY ts DESC LIMIT ?",
         (limit,),
     ).fetchall()
     conn.close()
