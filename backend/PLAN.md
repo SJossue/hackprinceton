@@ -228,4 +228,5 @@ Our piece of that: **spoken question → `/query` → JSON answer with times →
 
 <!-- Append one line per meaningful step. Most recent on top. -->
 
-- **2026-04-18 ??:??** — _Phase 0:_ plan written to `backend/PLAN.md`. Branch = `backend`. Tasks A–G outlined.
+- **2026-04-18** — _Phase B complete._ `query.py` hardened (JSON extractor verified against 7 fixture strings, Claude repair retry wired, safe fallback in place, mocks rewritten with relative offsets). `server.py` has `/health` + startup banner. `test_scenarios.py` ready for Jossue to run once deps are installed. Commits: `d06cdbb` (plan), `11d5b1e` (query), `4a6083e` (health), `2c8caef` (tests).
+- **2026-04-18** — _Phase 0:_ plan written to `backend/PLAN.md`. Branch = `backend`. Tasks A–G outlined.
