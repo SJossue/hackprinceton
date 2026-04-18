@@ -109,7 +109,11 @@ def _status() -> dict[str, Any]:
             "k2": k2_on,
             "primary": "k2" if k2_on else "claude",
         },
+        "sms": {
+            "twilio": agent_mod.twilio_configured(),
+        },
         "websocket_clients": len(connected_clients),
+        "state_clients": len(state_clients),
     }
 
 
@@ -130,6 +134,7 @@ async def _banner() -> None:
         f"│  Claude: {'✓' if llm['claude'] else '✗'}  model={query_mod.CLAUDE_MODEL}",
         f"│  K2:     {'✓' if llm['k2'] else '✗'}  endpoint={query_mod.K2_ENDPOINT if llm['k2'] else '(unset)'}",
         f"│  Primary LLM: {llm['primary']}",
+        f"│  Twilio: {'✓ (sends real SMS)' if s['sms']['twilio'] else '✗ (drafts only)'}",
         demo_mode_str,
         "│  Docs: http://localhost:8000/docs",
         "└───────────────────────────────────────────────────────",

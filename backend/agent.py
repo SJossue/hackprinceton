@@ -22,6 +22,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Twilio config — all four needed for SMS delivery. Any missing → agent
+# returns the draft but `sent=false`, so the demo still tells a clean story
+# ("we drafted this, here's what it says") even when Twilio isn't wired up.
+TWILIO_SID         = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_TOKEN       = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+TWILIO_TO_NUMBER   = os.getenv("TWILIO_TO_NUMBER", "").strip()
+
+
+def twilio_configured() -> bool:
+    return all((TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM_NUMBER, TWILIO_TO_NUMBER))
+
+
+def send_sms(body: str) -> tuple[bool, str]:
+    """Send the caregiver SMS via Twilio. Fail-safe: any error → (False, reason).
+
+    Returns a tuple of (ok, detail). `detail` is the Twilio message SID on
+    success, or the exception string on failure. Never raises — the demo
+    path must stay live even when Twilio is down or the account is out of
+    trial credit.
+    """
+    if not twilio_configured():
+        return (False, "twilio not configured")
+    try:
+        from twilio.rest import Client as TwilioClient
+        client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+        msg = client.messages.create(
+            body=body,
+            from_=TWILIO_FROM_NUMBER,
+            to=TWILIO_TO_NUMBER,
+        )
+        return (True, msg.sid)
+    except Exception as exc:
+        return (False, str(exc))
+
 MOCK_CALENDAR = [
     {"event": "Morning medication", "scheduled": "08:00", "window_min": 60},
     {"event": "Evening medication", "scheduled": "18:00", "window_min": 60},
@@ -104,7 +139,16 @@ def run() -> list[dict]:
     out = []
     for a in alerts:
         if a.suggested_action and a.suggested_action["type"] == "send_text":
-            a.suggested_action["draft"] = draft_caregiver_text(a)
+            draft = draft_caregiver_text(a)
+            a.suggested_action["draft"] = draft
+            # Attempt real delivery via Twilio. Fail-safe: if sending fails
+            # for any reason, surface the draft anyway so the dashboard +
+            # ambient display still tell a coherent story. `sent` makes it
+            # honest — judges see "drafted + sent ✓" vs. "drafted (send
+            # unavailable)" without any hand-waving.
+            sent_ok, detail = send_sms(draft)
+            a.suggested_action["sent"] = sent_ok
+            a.suggested_action["send_detail"] = detail
         out.append({
             "severity": a.severity,
             "title": a.title,

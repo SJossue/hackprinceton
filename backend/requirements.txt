@@ -16,3 +16,7 @@ anthropic>=0.40
 
 # Env loading
 python-dotenv>=1.0
+
+# SMS delivery for Eragon agent (optional — if TWILIO_* env vars unset,
+# the agent degrades to draft-only and reports sent=false).
+twilio>=9.0
