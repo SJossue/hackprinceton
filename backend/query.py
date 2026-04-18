@@ -56,6 +56,16 @@ _SAFE_FALLBACK: dict[str, Any] = {
     "event_ids": [],
 }
 
+# Per-call timeouts, picked so worst-case total to safe-fallback stays bounded.
+# See CONTRACTS.md §3c timeouts for the full budget discussion.
+K2_TIMEOUT_S = 8.0
+CLAUDE_TIMEOUT_S = 10.0
+
+
+def _fallback(model_tag: str = "fallback") -> dict[str, Any]:
+    """Build a fresh copy of the safe fallback with `_model` set."""
+    return {**_SAFE_FALLBACK, "_model": model_tag}
+
 
 @dataclass
 class EventRow:
@@ -176,7 +186,7 @@ def call_k2(log_text: str, question: str) -> dict | None:
                 "temperature": 0.2,
             },
             headers={"Authorization": f"Bearer {K2_API_KEY}"},
-            timeout=15.0,
+            timeout=K2_TIMEOUT_S,
         )
         r.raise_for_status()
         content = r.json()["choices"][0]["message"]["content"]
@@ -187,19 +197,26 @@ def call_k2(log_text: str, question: str) -> dict | None:
 
 
 def call_claude(log_text: str, question: str) -> dict:
-    """Claude 4.7 failover path.
+    """Claude 4.7 failover path. Always returns a validated answer with `_model` set.
 
-    First attempt: normal call. If response doesn't parse, send one repair
-    follow-up asking for strict JSON. If that still fails, return the safe
-    fallback so the UI never crashes.
+    Flow:
+      1. First call. If it returns valid JSON → done, `_model: claude-opus-4-7`.
+      2. If first call returns bad JSON → one repair retry with "JSON only" nudge.
+      3. If the first call raises (timeout / network / rate limit) → skip repair
+         and go straight to safe fallback. Don't burn a second timeout when the
+         connection is already misbehaving.
+      4. Any terminal failure → safe fallback, `_model: fallback`.
     """
     if not ANTHROPIC_API_KEY:
-        _log("claude", "ANTHROPIC_API_KEY missing → returning safe fallback")
-        return dict(_SAFE_FALLBACK)
+        _log("claude", "ANTHROPIC_API_KEY missing → safe fallback")
+        return _fallback()
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Anthropic(api_key=ANTHROPIC_API_KEY, timeout=CLAUDE_TIMEOUT_S)
     user_msg = f"Event log:\n{log_text}\n\nQuery: {question}"
 
+    # Attempt 1
+    first_text = ""
+    first_returned = False
     try:
         resp = client.messages.create(
             model=CLAUDE_MODEL,
@@ -207,16 +224,22 @@ def call_claude(log_text: str, question: str) -> dict:
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
         )
-        text = "".join(b.text for b in resp.content if b.type == "text")
+        first_text = "".join(b.text for b in resp.content if b.type == "text")
+        first_returned = True
         try:
-            return _validate_answer(_extract_json(text))
+            result = _validate_answer(_extract_json(first_text))
+            result["_model"] = CLAUDE_MODEL
+            _log("claude", "ok")
+            return result
         except ValueError:
             _log("claude", "first response didn't parse → repair retry")
     except Exception as exc:
-        _log("claude", f"first call failed → repair retry: {exc}")
-        text = ""
+        _log("claude", f"first call raised ({exc}) → safe fallback (no repair)")
+        return _fallback()
 
-    # Repair retry: explicit "JSON only" nudge, feeding the bad response back.
+    # Attempt 2: repair retry. Only runs if first call RETURNED with bad JSON.
+    if not first_returned:
+        return _fallback()
     try:
         resp = client.messages.create(
             model=CLAUDE_MODEL,
@@ -224,31 +247,41 @@ def call_claude(log_text: str, question: str) -> dict:
             system=SYSTEM_PROMPT,
             messages=[
                 {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": text or "{}"},
+                {"role": "assistant", "content": first_text or "{}"},
                 {"role": "user", "content": "Respond with the JSON object only. No prose, no fences."},
             ],
         )
         text = "".join(b.text for b in resp.content if b.type == "text")
-        return _validate_answer(_extract_json(text))
+        result = _validate_answer(_extract_json(text))
+        result["_model"] = CLAUDE_MODEL
+        _log("claude", "ok (after repair)")
+        return result
     except Exception as exc:
         _log("claude", f"repair retry failed → safe fallback: {exc}")
-        return dict(_SAFE_FALLBACK)
+        return _fallback()
 
 
 def query(question: str) -> dict:
+    """Answer a user question against the event log. Always returns a validated dict.
+
+    Model selection:
+      - K2 primary when K2_ENDPOINT + K2_API_KEY are set.
+      - Claude failover otherwise (or on any K2 error).
+      - Safe fallback when both fail; response carries `_model: "fallback"`.
+
+    See CONTRACTS.md §3c for the response shape and the _model enum.
+    """
     events = load_recent_events()
     log_text = format_log(events)
 
-    result = call_k2(log_text, question)
-    if result is not None:
-        result["_model"] = K2_MODEL
+    k2_result = call_k2(log_text, question)
+    if k2_result is not None:
+        k2_result["_model"] = K2_MODEL
         _log("k2", "ok")
-        return result
+        return k2_result
 
-    result = call_claude(log_text, question)
-    result["_model"] = CLAUDE_MODEL
-    _log("claude", "ok")
-    return result
+    # call_claude sets its own _model (either CLAUDE_MODEL or "fallback").
+    return call_claude(log_text, question)
 
 
 def main() -> None:

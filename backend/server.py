@@ -21,8 +21,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import query as query_mod
@@ -35,6 +36,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_LOCALHOST_ADDRS = {"127.0.0.1", "localhost", "::1"}
+
+
+@app.middleware("http")
+async def restrict_internal_to_localhost(request: Request, call_next):
+    """Any /internal/* path must originate from the Pi itself (see CONTRACTS.md §1)."""
+    if request.url.path.startswith("/internal/"):
+        client_host = request.client.host if request.client else None
+        if client_host not in _LOCALHOST_ADDRS:
+            return JSONResponse(
+                {"detail": f"forbidden: /internal/* is localhost-only (saw {client_host})"},
+                status_code=403,
+            )
+    return await call_next(request)
 
 DB_PATH = Path("rewind.db")
 connected_clients: set[WebSocket] = set()
