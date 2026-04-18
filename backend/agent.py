@@ -43,14 +43,22 @@ def check_medication_adherence() -> list[Alert]:
     today = now.strftime("%Y-%m-%d")
     alerts: list[Alert] = []
 
-    # Heuristic: "took medication" ≈ object_picked_up on a pill-bottle-like object
-    # (we're using "scissors" as a stand-in in the demo since COCO lacks pill bottles)
+    # Evidence that medication was taken, strongest signal first:
+    # 1. action_detected/taking_pills — the person+bottle-near-face rule in
+    #    capture.py's ACTION_RULES. Strongest evidence: we saw the gesture.
+    # 2. object_picked_up/bottle — weaker: pickup alone could be refilling,
+    #    moving, cleaning. Included because the action rule can miss frames.
+    #
+    # Legacy "scissors" stand-in is gone as of the spatial-grounding rework
+    # (HERO_OBJECTS narrowed; `bottle` now IS the pill-bottle stand-in).
     taken_times = []
     for ev in events:
         ev_date = datetime.fromtimestamp(ev.ts).strftime("%Y-%m-%d")
         if ev_date != today:
             continue
-        if ev.event_type == "object_picked_up" and ev.object in ("scissors", "bottle"):
+        if ev.event_type == "action_detected" and ev.object == "taking_pills":
+            taken_times.append(datetime.fromtimestamp(ev.ts))
+        elif ev.event_type == "object_picked_up" and ev.object == "bottle":
             taken_times.append(datetime.fromtimestamp(ev.ts))
 
     for dose in MOCK_CALENDAR:
