@@ -238,6 +238,67 @@ No body. Runs the Eragon proactive agent. Returns `Alert[]` — may be empty.
 
 ---
 
+## 3e. Ambient state channel — `/ws/state` + `/internal/state`
+
+A second, narrower wire from backend to the ambient display (phone-stand fallback, or SenseCAP serial bridge). Strictly separate from `/ws/events` so the event firehose doesn't flood the display and a stuck display client doesn't back-pressure event clients.
+
+### Subscribe (anyone on the same network)
+
+**Endpoint:** `ws://<pi-ip>:8000/ws/state`
+**Server → client messages:**
+
+```jsonc
+{ "state": "idle" }                                       // sent on connect + on idle transition
+{ "state": "listening" }                                  // user is being heard
+{ "state": "thinking" }                                   // LLM call in flight
+{ "state": "answer",   "text": "On the desk, 3 min ago." }  // answer ready
+{ "state": "alert",    "text": "Evening meds 2h overdue" }  // Eragon alert
+```
+
+Clients render what they understand, ignore unknowns. Payload keys match the JSON-lines in `sensecap/README.md` verbatim so if the SenseCAP firmware ships, it's a thin pass-through to `/dev/ttyACM0` — no schema translation.
+
+### Trigger (Pi-local only)
+
+**Endpoint:** `POST http://127.0.0.1:8000/internal/state`
+**Access control:** localhost-only, same middleware gate as `/internal/event_added`.
+**Body:** `{"state": "listening" | "thinking" | "answer" | "alert" | "idle", "text"?: string}`. Server broadcasts verbatim to all `/ws/state` subscribers.
+
+**Who hits it:**
+
+- Grove button handler on the Pi, on press → `{"state": "listening"}`.
+- Any Pi-side script needing to drive the display.
+- The backend itself auto-broadcasts `thinking` at `/query` start and `answer` at `/query` return — **no integration work needed** for typed-query path; it drives the ambient display for free.
+
+### Failure modes
+
+| Condition | Behavior |
+|---|---|
+| No subscribers | `broadcast_state()` iterates zero clients, succeeds silently. |
+| A subscriber's socket dies mid-send | Dropped from `state_clients` set on next iteration. |
+| Malformed body to `/internal/state` | Pydantic 422; display unchanged. |
+
+---
+
+## 3f. Environment flags — demo-day safety dials
+
+Two independent env flags, read once at backend import:
+
+### `REWIND_DEMO_MODE`
+
+Truthy values (`1`, `true`, `yes`, `on`) activate. When on:
+
+- K2 primary path is **skipped** — `/query` goes straight to Claude. No failover dance, no timeout absorption from a misbehaving K2.
+- Claude per-call timeout drops from **10 s → 6 s**. Worst-case to safe-fallback stays inside the demo-moment latency budget.
+- Banner renders `DEMO MODE: ✓ Claude-only, CLAUDE_TIMEOUT=6s`.
+
+Usage: `REWIND_DEMO_MODE=1 uvicorn server:app --host 0.0.0.0 --port 8000`. Unset for normal ops.
+
+### `REWIND_FIXTURE_MODE` (reserved, not implemented yet)
+
+When it lands: inject `_mock_events()` transparently when SQLite is empty or the latest event is >30 min stale. Separate flag from DEMO_MODE so at judging you can enable Claude-only safety **without** forcing fake data — flip FIXTURE_MODE additionally only when live events glitch.
+
+---
+
 ## 4. Degradation ladder (what the user sees when things go wrong)
 
 | Failure | User-visible behavior |
