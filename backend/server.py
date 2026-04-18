@@ -213,8 +213,23 @@ async def post_query(body: QueryIn) -> dict[str, Any]:
 
 
 @app.post("/agent/check")
-def post_agent_check() -> list[dict[str, Any]]:
-    return agent_mod.run()
+async def post_agent_check() -> list[dict[str, Any]]:
+    alerts = agent_mod.run()
+
+    # Ambient broadcast: if anything fired, push the highest-severity alert
+    # to /ws/state so the phone-stand / SenseCAP lights up red. Silent when
+    # no alerts — the display stays idle. Severity priority urgent > warn.
+    if alerts:
+        priority = {"urgent": 2, "warn": 1}
+        top = max(alerts, key=lambda a: priority.get(a.get("severity", ""), 0))
+        text = f"{top.get('title', 'Alert')} — {top.get('body', '')}".strip(" —")
+        await broadcast_state("alert", text=text)
+        _LOG.warning("/agent/check served %d alert(s), broadcast top: %s",
+                     len(alerts), top.get("title"))
+    else:
+        _LOG.info("/agent/check clean — no alerts")
+
+    return alerts
 
 
 @app.websocket("/ws/events")
