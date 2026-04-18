@@ -38,7 +38,7 @@ Use `date +'%Y-%m-%d %H:%M'` for copy-paste timestamps.
   - **Path A (hackathon scope, Phase D):** tie `confidence` to concrete criteria in the prompt — "high = directly stated in one recent event, medium = inferred from 2–3 events, low = cannot answer from log or requires guessing." Under this rubric, "I didn't see that" is automatically `low`. Re-uses existing UI styling hierarchy.
   - **Path B (Phase D+ stretch / Phase G integration):** extend response schema with `answer_type: "found" | "inferred" | "not_observed" | "ambiguous"`. UI styles by type, not just confidence. Structurally correct — represents that "don't know" is a different kind of answer, not just a less-confident one.
 
-## 2026-04-18 02:43 · absolute time where relative reads warmer
+## ✅ 2026-04-18 02:43 · absolute time where relative reads warmer — *addressed*
 - **Question:** When did the last person leave?
 - **Answer:**   "The last person left at 02:42."
 - **Model:**    claude-opus-4-7
@@ -50,6 +50,7 @@ Use `date +'%Y-%m-%d %H:%M'` for copy-paste timestamps.
   - prior day: "yesterday evening"
   - older: "3 days ago"
   Keep the absolute timestamp in the event alongside the relative one (`ts_relative` + `ts_absolute`) and let the model pick based on context — use absolute when specificity matters clinically (e.g., "8:02 AM" for medication timing), relative otherwise.
+- **Addressed:** `humanize_timestamp()` in `query.py` implements exactly those buckets. Each event line in `format_log` now carries both the absolute `HH:MM:SS` and the relative phrase. Verified: "when did the last person leave?" → *"just a moment ago, at 7:52 AM"* (Claude chose hybrid); "did I take my pill bottle this morning?" → *"the only time I noticed you with the pill bottle was last night around 10:53 PM"* (relative dominant). System prompt untouched — the data-layer change alone produced the voice improvement.
 
 ## ✅ 2026-04-18 02:43 · stand-in labels surfacing — *addressed*
 - **Question:** What objects have been picked up today?

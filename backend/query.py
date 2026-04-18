@@ -156,12 +156,59 @@ def _display_label(raw: str) -> str:
     return DISPLAY_LABELS.get(raw, raw)
 
 
+def humanize_timestamp(ts: float, now: float) -> str:
+    """Render an event timestamp as a human-spoken phrase.
+
+    Bucketed per prompt_debt.md (2026-04-18 02:43 · absolute time):
+      < 90 s           : "a moment ago"
+      < 1 hour         : "N minutes ago"
+      same calendar day: "earlier today around HH AM/PM"
+      prior day        : "yesterday around HH AM/PM"
+      older            : "N days ago"
+
+    The LLM still receives the absolute timestamp alongside this relative
+    phrase (see ``format_log``) so it can choose specificity when the context
+    warrants — e.g. medication timing wants "8:02 AM", not "earlier today".
+    Natural-language context (say-it-aloud) wants relative.
+    """
+    dt_now = datetime.fromtimestamp(now)
+    dt_ev  = datetime.fromtimestamp(ts)
+    delta_s = now - ts
+
+    if delta_s < 0:
+        # Future events shouldn't exist, but don't crash if clocks disagree.
+        return "just now"
+    if delta_s < 90:
+        return "a moment ago"
+    if delta_s < 3600:
+        mins = int(delta_s // 60)
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+
+    # Hour-rounded phrasing for same-day and yesterday needs a friendly AM/PM.
+    hour_phrase = dt_ev.strftime("%I %p").lstrip("0").lower().replace(" am", " AM").replace(" pm", " PM")
+
+    if dt_ev.date() == dt_now.date():
+        return f"earlier today around {hour_phrase}"
+    if (dt_now.date() - dt_ev.date()).days == 1:
+        return f"yesterday around {hour_phrase}"
+
+    days = (dt_now.date() - dt_ev.date()).days
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
 def format_log(events: list[EventRow]) -> str:
+    """Serialize events for the LLM. Each line carries both an absolute
+    timestamp (for clinical specificity, e.g. medication timing) and a
+    relative phrase (for natural spoken answers). The prompt leaves the
+    choice to the model.
+    """
     lines = []
+    now = datetime.now().timestamp()
     for e in events:
         tstr = datetime.fromtimestamp(e.ts).strftime("%H:%M:%S")
-        obj = _display_label(e.object)
-        lines.append(f"[id={e.id}] [{tstr}] {e.event_type}: {obj}")
+        rel  = humanize_timestamp(e.ts, now)
+        obj  = _display_label(e.object)
+        lines.append(f"[id={e.id}] [{tstr} · {rel}] {e.event_type}: {obj}")
     return "\n".join(lines)
 
 
