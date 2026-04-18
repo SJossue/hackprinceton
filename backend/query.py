@@ -32,7 +32,10 @@ import httpx
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
+from observability import get_logger
+
 load_dotenv()
+_LOG = get_logger()
 
 DB_PATH = Path("rewind.db")
 RECENT_EVENTS_LIMIT = 80
@@ -140,8 +143,16 @@ def format_log(events: list[EventRow]) -> str:
     return "\n".join(lines)
 
 
-def _log(tag: str, msg: str) -> None:
-    print(f"[{tag}] {msg}", file=sys.stderr)
+def _log(tag: str, msg: str, level: str = "info") -> None:
+    """Route query-engine events through the structured logger.
+
+    ``level`` maps to PLAN.md's three-level split:
+      info  — request received/answered, model used.
+      warn  — fallback triggered, K2 failover, repair-retry used, slow request.
+      error — safe fallback actually served, unrecoverable exception.
+    """
+    fn = getattr(_LOG, level if level != "warn" else "warning", _LOG.info)
+    fn("[%s] %s", tag, msg)
 
 
 def _extract_json(text: str) -> dict:
@@ -209,7 +220,8 @@ def call_k2(log_text: str, question: str) -> dict | None:
         content = r.json()["choices"][0]["message"]["content"]
         return _validate_answer(_extract_json(content))
     except Exception as exc:
-        _log("k2", f"failed → falling back to Claude: {exc}")
+        # WARN: K2 failover to Claude is a degraded path but still a valid answer.
+        _log("k2", f"failed → falling back to Claude: {exc}", "warn")
         return None
 
 
@@ -225,7 +237,8 @@ def call_claude(log_text: str, question: str) -> dict:
       4. Any terminal failure → safe fallback, `_model: fallback`.
     """
     if not ANTHROPIC_API_KEY:
-        _log("claude", "ANTHROPIC_API_KEY missing → safe fallback")
+        # ERROR: safe fallback is actually being served to the user.
+        _log("claude", "ANTHROPIC_API_KEY missing → safe fallback", "error")
         return _fallback()
 
     client = Anthropic(api_key=ANTHROPIC_API_KEY, timeout=CLAUDE_TIMEOUT_S)
@@ -249,9 +262,11 @@ def call_claude(log_text: str, question: str) -> dict:
             _log("claude", "ok")
             return result
         except ValueError:
-            _log("claude", "first response didn't parse → repair retry")
+            # WARN: repair-retry being used.
+            _log("claude", "first response didn't parse → repair retry", "warn")
     except Exception as exc:
-        _log("claude", f"first call raised ({exc}) → safe fallback (no repair)")
+        # ERROR: network/timeout → safe fallback served.
+        _log("claude", f"first call raised ({exc}) → safe fallback (no repair)", "error")
         return _fallback()
 
     # Attempt 2: repair retry. Only runs if first call RETURNED with bad JSON.
@@ -271,10 +286,12 @@ def call_claude(log_text: str, question: str) -> dict:
         text = "".join(b.text for b in resp.content if b.type == "text")
         result = _validate_answer(_extract_json(text))
         result["_model"] = CLAUDE_MODEL
-        _log("claude", "ok (after repair)")
+        # WARN: answer served, but repair-retry was needed.
+        _log("claude", "ok (after repair)", "warn")
         return result
     except Exception as exc:
-        _log("claude", f"repair retry failed → safe fallback: {exc}")
+        # ERROR: safe fallback actually served.
+        _log("claude", f"repair retry failed → safe fallback: {exc}", "error")
         return _fallback()
 
 

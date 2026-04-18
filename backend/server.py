@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,9 @@ from pydantic import BaseModel
 
 import query as query_mod
 import agent as agent_mod
+from observability import SLOW_REQUEST_MS, get_logger
+
+_LOG = get_logger()
 
 app = FastAPI(title="Rewind API")
 app.add_middleware(
@@ -140,7 +144,33 @@ def get_events(limit: int = 80) -> list[dict[str, Any]]:
 
 @app.post("/query")
 def post_query(body: QueryIn) -> dict[str, Any]:
-    return query_mod.query(body.question)
+    t0 = time.perf_counter()
+    _LOG.info("/query received: %r", body.question)
+    result = query_mod.query(body.question)
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    model = result.get("_model", "unknown")
+    confidence = result.get("confidence", "unknown")
+
+    # Level split per PLAN.md §Phase C:
+    # ERROR = safe fallback actually served (user got the "I didn't see that" apology).
+    # WARN  = slow request (>5s) even if answer is valid.
+    # INFO  = happy path.
+    if model == "fallback":
+        _LOG.error(
+            "/query served safe fallback latency=%dms q=%r", latency_ms, body.question
+        )
+    elif latency_ms > SLOW_REQUEST_MS:
+        _LOG.warning(
+            "/query slow latency=%dms (>%dms) model=%s conf=%s",
+            latency_ms, SLOW_REQUEST_MS, model, confidence,
+        )
+    else:
+        _LOG.info(
+            "/query ok model=%s latency=%dms conf=%s", model, latency_ms, confidence
+        )
+
+    return result
 
 
 @app.post("/agent/check")
