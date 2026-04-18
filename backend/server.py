@@ -58,6 +58,11 @@ async def restrict_internal_to_localhost(request: Request, call_next):
 
 DB_PATH = Path("rewind.db")
 connected_clients: set[WebSocket] = set()
+# Separate channel from /ws/events. Phone-stand /status UI and any ambient
+# display (SenseCAP if firmware ships, phone fallback otherwise) subscribes
+# here to show idle / listening / thinking / answer states. Event clients
+# don't need state noise; state clients don't need event firehose.
+state_clients: set[WebSocket] = set()
 
 
 class QueryIn(BaseModel):
@@ -151,9 +156,13 @@ def get_events(limit: int = 80) -> list[dict[str, Any]]:
 
 
 @app.post("/query")
-def post_query(body: QueryIn) -> dict[str, Any]:
+async def post_query(body: QueryIn) -> dict[str, Any]:
     t0 = time.perf_counter()
     _LOG.info("/query received: %r", body.question)
+    # Ambient state: thinking → answer (or idle on failure). Phone-stand
+    # and SenseCAP subscribers get a visible UI transition even when the
+    # query arrives via HTTP instead of a button press.
+    await broadcast_state("thinking")
     result = query_mod.query(body.question)
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -190,6 +199,10 @@ def post_query(body: QueryIn) -> dict[str, Any]:
         event_ids=event_ids,
     )
 
+    # Ambient state: push the answer to /ws/state subscribers. The display
+    # layer decides how long to show it and auto-returns to idle.
+    await broadcast_state("answer", text=answer)
+
     return result
 
 
@@ -209,6 +222,23 @@ async def ws_events(ws: WebSocket) -> None:
         connected_clients.discard(ws)
 
 
+@app.websocket("/ws/state")
+async def ws_state(ws: WebSocket) -> None:
+    """Ambient-display state channel. One subscriber per phone-stand
+    (or SenseCAP serial bridge in a future sprint). Messages are tiny
+    JSON objects: {"state": "idle|listening|thinking|answer", "text"?: str}.
+    """
+    await ws.accept()
+    state_clients.add(ws)
+    try:
+        # Send current state on connect so late subscribers don't miss it.
+        await ws.send_text(json.dumps({"state": "idle"}))
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        state_clients.discard(ws)
+
+
 async def broadcast_event(event: dict[str, Any]) -> None:
     dead: list[WebSocket] = []
     for client in connected_clients:
@@ -223,4 +253,42 @@ async def broadcast_event(event: dict[str, Any]) -> None:
 @app.post("/internal/event_added")
 async def internal_event_added(body: EventIn) -> dict[str, str]:
     await broadcast_event(body.model_dump())
+    return {"status": "ok"}
+
+
+# ---------- Ambient state broadcast -----------------------------------------
+
+async def broadcast_state(state: str, text: str | None = None) -> None:
+    """Push an ambient-display state change to all /ws/state subscribers.
+    Payload: {"state": "idle|listening|thinking|answer", "text"?: str}.
+    Fail-silent on per-client errors; a dead socket shouldn't cascade.
+    """
+    msg: dict[str, Any] = {"state": state}
+    if text is not None:
+        msg["text"] = text
+    payload = json.dumps(msg)
+    dead: list[WebSocket] = []
+    for client in state_clients:
+        try:
+            await client.send_text(payload)
+        except Exception:
+            dead.append(client)
+    for d in dead:
+        state_clients.discard(d)
+
+
+class StateIn(BaseModel):
+    state: str
+    text: str | None = None
+
+
+@app.post("/internal/state")
+async def internal_state(body: StateIn) -> dict[str, str]:
+    """Localhost-only. Grove button handler, capture.py, or any Pi-side
+    trigger hits this to push an ambient-display state. Accepts any state
+    string — the clients render what they understand and ignore the rest.
+    """
+    await broadcast_state(body.state, body.text)
+    _LOG.info("/internal/state -> %s%s", body.state,
+              (" text=%r" % body.text) if body.text else "")
     return {"status": "ok"}
