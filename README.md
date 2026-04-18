@@ -103,9 +103,12 @@ These are the wires between people's code. Changing a field breaks a teammate's 
   "event_type": "object_placed",
   "object": "bottle",
   "track_id": 17,
-  "thumb_path": "thumbs/1713456789120.jpg"
+  "thumb_path": "thumbs/1713456789120.jpg",
+  "location": "the desk"
 }
 ```
+
+`location` is the surface the object was resolved to (spatial grounding — see [`pi/README.md`](./pi)). It may be `null` for person events or when no nearby surface was detected.
 
 ### Backend → Frontend
 

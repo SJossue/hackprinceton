@@ -20,8 +20,9 @@ rewind.db-*
 thumbs/
 */thumbs/
 
-# Logs
+# Logs and runtime journals (backend Phase C outputs — local only)
 *.log
+backend/queries.jsonl
 
 # OS / IDE
 .DS_Store

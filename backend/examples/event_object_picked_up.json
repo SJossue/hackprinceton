@@ -1,0 +1,8 @@
+{
+  "id": 43,
+  "ts": 1713456820.456,
+  "event_type": "object_picked_up",
+  "object": "remote",
+  "track_id": 21,
+  "thumb_path": "thumbs/1713456820456.jpg"
+}
