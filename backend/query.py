@@ -43,6 +43,15 @@ K2_ENDPOINT = os.getenv("K2_ENDPOINT", "")
 K2_API_KEY = os.getenv("K2_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+# Demo-day safety dial. When set to any truthy value:
+#   - K2 is skipped entirely (Claude-only path, no failover dance)
+#   - Claude per-call timeout is tightened so worst-case-to-fallback
+#     stays under the demo-moment latency budget.
+# The banner + /health aren't altered — honest reporting stands.
+# See PLAN.md §Phase C "Two env flags, independent." FIXTURE_MODE is
+# deliberately separate; flipping DEMO_MODE doesn't imply fake data.
+REWIND_DEMO_MODE = os.getenv("REWIND_DEMO_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def k2_configured() -> bool:
     """True when K2_ENDPOINT + K2_API_KEY look like real values.
@@ -78,8 +87,10 @@ _SAFE_FALLBACK: dict[str, Any] = {
 
 # Per-call timeouts, picked so worst-case total to safe-fallback stays bounded.
 # See CONTRACTS.md §3c timeouts for the full budget discussion.
+# DEMO_MODE tightens Claude's timeout so the demo-moment latency cap holds
+# even if the network has a bad second.
 K2_TIMEOUT_S = 8.0
-CLAUDE_TIMEOUT_S = 10.0
+CLAUDE_TIMEOUT_S = 6.0 if REWIND_DEMO_MODE else 10.0
 
 
 def _fallback(model_tag: str = "fallback") -> dict[str, Any]:
@@ -401,11 +412,15 @@ def query(question: str) -> dict:
     events = load_recent_events()
     log_text = format_log(events)
 
-    k2_result = call_k2(log_text, question)
-    if k2_result is not None:
-        k2_result["_model"] = K2_MODEL
-        _log("k2", "ok")
-        return k2_result
+    # DEMO_MODE short-circuits the K2 primary path entirely. Reason: K2 is
+    # useful when it works, but at the demo moment we prefer a known-good
+    # Claude call over a K2 failover dance that might eat a timeout.
+    if not REWIND_DEMO_MODE:
+        k2_result = call_k2(log_text, question)
+        if k2_result is not None:
+            k2_result["_model"] = K2_MODEL
+            _log("k2", "ok")
+            return k2_result
 
     # call_claude sets its own _model (either CLAUDE_MODEL or "fallback").
     return call_claude(log_text, question)

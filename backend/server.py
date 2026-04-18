@@ -118,6 +118,11 @@ async def _banner() -> None:
     s = _status()
     db = s["db"]
     llm = s["llm"]
+    demo_mode_str = (
+        f"│  DEMO MODE: ✓ Claude-only, CLAUDE_TIMEOUT={query_mod.CLAUDE_TIMEOUT_S}s"
+        if query_mod.REWIND_DEMO_MODE else
+        f"│  DEMO MODE: ✗"
+    )
     lines = [
         "",
         "┌─ Rewind backend ─────────────────────────────────────",
@@ -125,6 +130,7 @@ async def _banner() -> None:
         f"│  Claude: {'✓' if llm['claude'] else '✗'}  model={query_mod.CLAUDE_MODEL}",
         f"│  K2:     {'✓' if llm['k2'] else '✗'}  endpoint={query_mod.K2_ENDPOINT if llm['k2'] else '(unset)'}",
         f"│  Primary LLM: {llm['primary']}",
+        demo_mode_str,
         "│  Docs: http://localhost:8000/docs",
         "└───────────────────────────────────────────────────────",
         "",
