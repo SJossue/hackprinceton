@@ -2,30 +2,35 @@
 Rewind — observability helpers.
 Owner: Jossue
 
-``rewind.log`` is infra telemetry. Three-level split so the failure layer is
-obvious at a glance:
+Two artifacts live here by design because they serve different audiences:
+
+- ``rewind.log`` — infra telemetry. Three-level split so the failure layer is
+  obvious at a glance:
     INFO  — request received/answered, model used, latency.
     WARN  — fallback triggered, K2 failover, slow (>5s), repair-retry used.
     ERROR — safe fallback actually served, unrecoverable exception.
+  Rotating (2 MB × 5). ``tail -f backend/rewind.log`` at demo time is fine —
+  judges noticing the production-feel is a feature, not a bug.
 
-Rotating (2 MB × 5). ``tail -f backend/rewind.log`` at demo time is fine —
-judges noticing the production-feel is a feature, not a bug.
+- ``queries.jsonl`` — product corpus, one JSON line per ``/query`` hit.
+  Schema: ``{ts, question, answer, model, latency_ms, confidence, event_ids}``.
+  Append-only, never rotated — Phase D A/B tests run against this accumulated
+  real-question stream, not hypotheticals.
 
-The file lands in the backend's working directory (matches ``DB_PATH``).
-Gitignored.
-
-A separate ``queries.jsonl`` journal (the product corpus, not infra) will
-live here too in a follow-up commit; these two serve different audiences on
-purpose and shouldn't share a rotation policy.
+Both files land in the backend's working directory (matches ``DB_PATH``).
+Both are gitignored.
 """
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
 import sys
+import time
 from pathlib import Path
 
 LOG_PATH = Path("rewind.log")
+JOURNAL_PATH = Path("queries.jsonl")
 
 SLOW_REQUEST_MS = 5000  # WARN threshold on /query latency
 
@@ -61,3 +66,34 @@ def get_logger() -> logging.Logger:
 
     _logger = lg
     return lg
+
+
+def journal_query(
+    *,
+    question: str,
+    answer: str,
+    model: str,
+    latency_ms: int,
+    confidence: str,
+    event_ids: list[int],
+) -> None:
+    """Append one JSON line per ``/query`` hit to ``queries.jsonl``.
+
+    Fails silently — the corpus is a lagging artifact. Losing a line is
+    annoying; losing an answer is a demo bug. Journal writes must never
+    take down the product path.
+    """
+    record = {
+        "ts": time.time(),
+        "question": question,
+        "answer": answer,
+        "model": model,
+        "latency_ms": latency_ms,
+        "confidence": confidence,
+        "event_ids": event_ids,
+    }
+    try:
+        with JOURNAL_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        get_logger().warning("journal_query: append failed", exc_info=True)

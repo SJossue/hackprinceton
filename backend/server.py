@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 import query as query_mod
 import agent as agent_mod
-from observability import SLOW_REQUEST_MS, get_logger
+from observability import SLOW_REQUEST_MS, get_logger, journal_query
 
 _LOG = get_logger()
 
@@ -151,6 +151,8 @@ def post_query(body: QueryIn) -> dict[str, Any]:
 
     model = result.get("_model", "unknown")
     confidence = result.get("confidence", "unknown")
+    event_ids = result.get("event_ids", []) or []
+    answer = result.get("answer", "")
 
     # Level split per PLAN.md §Phase C:
     # ERROR = safe fallback actually served (user got the "I didn't see that" apology).
@@ -169,6 +171,16 @@ def post_query(body: QueryIn) -> dict[str, Any]:
         _LOG.info(
             "/query ok model=%s latency=%dms conf=%s", model, latency_ms, confidence
         )
+
+    # Product corpus (queries.jsonl) — separate from the infra log.
+    journal_query(
+        question=body.question,
+        answer=answer,
+        model=model,
+        latency_ms=latency_ms,
+        confidence=confidence,
+        event_ids=event_ids,
+    )
 
     return result
 
