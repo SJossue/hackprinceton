@@ -1,0 +1,13 @@
+[
+  {
+    "severity": "urgent",
+    "title": "Missed: Evening medication",
+    "body": "Scheduled for 18:00; 127 min overdue.",
+    "suggested_action": {
+      "type": "send_text",
+      "to": "+1-555-0199",
+      "to_name": "Sarah (daughter)",
+      "draft": "Hi Sarah — just a gentle heads-up. Dad's evening meds were scheduled for 6 but haven't been picked up yet. Everything's fine, wanted you to know."
+    }
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "answer": "You picked them up from the kitchen counter at 10:48 AM — about 20 minutes ago. I haven't seen you set them down since.",
+  "confidence": "high",
+  "event_ids": [5],
+  "_model": "claude-opus-4-7"
+}

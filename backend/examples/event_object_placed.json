@@ -1,0 +1,8 @@
+{
+  "id": 42,
+  "ts": 1713456789.123,
+  "event_type": "object_placed",
+  "object": "bottle",
+  "track_id": 17,
+  "thumb_path": "thumbs/1713456789123.jpg"
+}
