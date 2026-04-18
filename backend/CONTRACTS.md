@@ -41,7 +41,13 @@ Ports: backend runs on `:8000`. Pi and backend share `127.0.0.1`. Laptop hits `h
   "event_type":  "object_placed",  // string, required. One of the enum below.
   "object":      "bottle",         // string, required. See § object conventions.
   "track_id":    17,               // int | null, optional. ByteTrack track id.
-  "thumb_path":  "thumbs/1713456789123.jpg"  // string | null, optional.
+  "thumb_path":  "thumbs/1713456789123.jpg", // string | null, optional.
+  "location":    "the desk"        // string | null, optional. Spatial grounding —
+                                   // "the desk", "the chair", etc. Resolved by
+                                   // capture.py against SURFACES. None for person
+                                   // and action events (location of a person isn't
+                                   // meaningful in this model); None on object
+                                   // events when no surface match was found.
 }
 ```
 
@@ -49,18 +55,25 @@ Ports: backend runs on `:8000`. Pi and backend share `127.0.0.1`. Laptop hits `h
 
 | value | meaning | typical `object` |
 |---|---|---|
-| `object_placed` | A tracked object has been stably visible ≥3 frames (~0.6 s @ 5 fps) | `bottle`, `remote`, `scissors`, `book`, `cell phone`, `cup` |
+| `object_placed` | A tracked object has been stably visible ≥3 frames (~0.6 s @ 5 fps) | `bottle`, `remote`, `book`, `cell phone` |
 | `object_picked_up` | A previously-confirmed object has been missing ≥10 frames (~2 s) | same as above |
 | `person_entered` | A `person` track has stably appeared | `person` |
 | `person_left` | A confirmed `person` track has disappeared | `person` |
-| `action_detected` | A rule-based action matched (drinking, etc.) | `drinking_bottle`, `drinking_cup` |
+| `action_detected` | A person+object rule matched, debounced per-action at 8 s | `taking_pills`, `using_phone`, `reading` |
 
 ### `object` conventions
 
-- For object events: the COCO class label verbatim (e.g. `bottle`, `cell phone`, `remote`, `book`, `scissors`, `cup`). Lowercase, no trailing whitespace.
+- For object events: the COCO class label verbatim (e.g. `bottle`, `cell phone`, `remote`, `book`). Lowercase, no trailing whitespace. Note: after the spatial-grounding rework, `HERO_OBJECTS` no longer includes `scissors` or `cup` — the Pi won't emit those.
 - For `person_entered` / `person_left`: always `person`.
-- For `action_detected`: `{action}_{subject}` — e.g. `drinking_cup`, `drinking_bottle`. Underscore-separated, all lowercase.
-- Demo stand-ins (COCO has no "keys" or "pill bottle"): the Pi emits the COCO label (`remote`, `scissors`). The LLM prompt layer handles the semantic mapping at query time. **Do not rewrite labels at ingestion.**
+- For `action_detected`: the action name alone — `taking_pills`, `using_phone`, `reading`. (Older `drinking_{bottle,cup}` values are retired with the spatial-grounding rework.)
+- Demo stand-ins (COCO has no "keys" or "pill bottle"): the Pi emits the COCO label (`remote` for keys, `bottle` for pill bottle). The query layer translates them via `DISPLAY_LABELS` before they reach the LLM. **Do not rewrite labels at ingestion.**
+
+### `location` conventions
+
+- Friendly surface name pre-resolved by `capture.py` (`the desk`, `the chair`). The word `the` is included — designed to drop into natural-language output as `"{event} on {location}"` without extra formatting.
+- Set on `object_placed` / `object_picked_up` events when the object's bottom-center sits inside (or its bbox meaningfully overlaps) a known surface bbox per frame. See `resolve_location()` in `pi/capture.py` for the ranking heuristic.
+- `null` for person events and action events, and for any object event where no surface match was found.
+- Backend stores verbatim. Query layer appends ` on {location}` to each event line in `format_log` when present.
 
 ### `thumb_path` conventions
 
@@ -112,7 +125,8 @@ One event per text frame. Frames are emitted only when `POST /internal/event_add
   "event_type": "object_placed",
   "object": "bottle",
   "track_id": 17,
-  "thumb_path": "thumbs/1713456789123.jpg"
+  "thumb_path": "thumbs/1713456789123.jpg",
+  "location": "the desk"
 }
 ```
 
