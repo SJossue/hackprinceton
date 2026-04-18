@@ -1,23 +1,32 @@
 """
-Rewind — Query engine (starter)
+Rewind — Query engine
 Owner: Jossue
 
 Run:   python query.py "where did I leave my keys"
 Deps:  anthropic, httpx, python-dotenv
 
-Goal by 2 AM Friday: `query("where are my keys")` returns a coherent JSON answer
-against a mock or real event log. K2 primary, Claude 4.7 failover from day one.
+Goal: `query("where are my keys")` returns a coherent JSON answer against a
+mock or real event log. K2 primary, Claude 4.7 failover from day one.
+
+Demo-robustness notes:
+- LLMs sometimes wrap JSON in prose or markdown fences. `_extract_json` tries
+  direct parse, then fences, then a regex for the first {...} block.
+- If Claude's first response doesn't parse, one repair retry asks for JSON only.
+- If everything fails, `_SAFE_FALLBACK` returns a valid-shape "I didn't see
+  that happen." so the frontend never crashes on a bad demo moment.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 from anthropic import Anthropic
@@ -31,6 +40,9 @@ K2_ENDPOINT = os.getenv("K2_ENDPOINT", "")
 K2_API_KEY = os.getenv("K2_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+CLAUDE_MODEL = "claude-opus-4-7"
+K2_MODEL = "k2-think-v2"
+
 SYSTEM_PROMPT = """You are the reasoning layer of Rewind, an on-device \
 episodic-memory system for a physical space. You receive a structured event log \
 and a user query. Answer strictly from the log. Never invent events. Respond \
@@ -38,12 +50,20 @@ in JSON only: {"answer": string, "confidence": "high"|"medium"|"low", "event_ids
 Keep answers under 2 sentences, warm tone, include specific times. If the log \
 doesn't contain the answer, say: "I didn't see that happen.\""""
 
+_SAFE_FALLBACK: dict[str, Any] = {
+    "answer": "I didn't see that happen.",
+    "confidence": "low",
+    "event_ids": [],
+}
+
+
 @dataclass
 class EventRow:
     id: int
     ts: float
     event_type: str
     object: str
+
 
 def load_recent_events(db_path: Path = DB_PATH, limit: int = RECENT_EVENTS_LIMIT) -> list[EventRow]:
     if not db_path.exists():
@@ -56,18 +76,34 @@ def load_recent_events(db_path: Path = DB_PATH, limit: int = RECENT_EVENTS_LIMIT
     conn.close()
     return [EventRow(*r) for r in reversed(rows)]
 
+
 def _mock_events() -> list[EventRow]:
-    base = datetime.now().timestamp() - 3600 * 3
+    """Synthetic events covering the three demo scenarios.
+
+    Anchored to relative offsets from `now` so the timeline is always
+    coherent regardless of what time the demo runs:
+      - morning meds: ~9 hours ago
+      - person traffic: ~6 hours ago
+      - keys picked up: ~4 hours ago
+      - water placed: ~2 hours ago
+      - judge places book: ~3 minutes ago
+      - person leaves: ~1 minute ago
+
+    Returned in chronological order (oldest first) to match how
+    `load_recent_events` delivers real rows to `format_log`.
+    """
+    now = datetime.now().timestamp()
     return [
-        EventRow(1, base + 120,  "object_placed",      "scissors"),   # pill bottle stand-in
-        EventRow(2, base + 135,  "action_detected",    "drinking_cup"),
-        EventRow(3, base + 900,  "object_picked_up",   "bottle"),
-        EventRow(4, base + 1050, "object_placed",      "bottle"),
-        EventRow(5, base + 2100, "object_picked_up",   "cell phone"),
-        EventRow(6, base + 2400, "person_entered",     "person"),
-        EventRow(7, base + 2460, "object_placed",      "remote"),     # keys stand-in
-        EventRow(8, base + 2700, "person_left",        "person"),
+        EventRow(1, now - 9 * 3600,        "object_picked_up", "scissors"),     # pill bottle stand-in
+        EventRow(2, now - 9 * 3600 + 15,   "action_detected",  "drinking_cup"),
+        EventRow(3, now - 6 * 3600,        "person_entered",   "person"),
+        EventRow(4, now - 6 * 3600 + 60,   "person_left",      "person"),
+        EventRow(5, now - 4 * 3600,        "object_picked_up", "remote"),       # keys stand-in
+        EventRow(6, now - 2 * 3600,        "object_placed",    "bottle"),
+        EventRow(7, now - 180,             "object_placed",    "book"),
+        EventRow(8, now - 60,              "person_left",      "person"),
     ]
+
 
 def format_log(events: list[EventRow]) -> str:
     lines = []
@@ -76,14 +112,62 @@ def format_log(events: list[EventRow]) -> str:
         lines.append(f"[id={e.id}] [{tstr}] {e.event_type}: {e.object}")
     return "\n".join(lines)
 
+
+def _log(tag: str, msg: str) -> None:
+    print(f"[{tag}] {msg}", file=sys.stderr)
+
+
+def _extract_json(text: str) -> dict:
+    """Pull a JSON object out of an LLM response, even if wrapped in prose or fences.
+
+    Strategy ladder:
+      1. Direct json.loads
+      2. Strip ```json / ``` fences and retry
+      3. Regex for the first balanced {...} block
+    Raises ValueError if no strategy works.
+    """
+    s = text.strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    stripped = s.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"no JSON object found in response: {text[:200]!r}")
+
+
+def _validate_answer(obj: dict) -> dict:
+    """Ensure the LLM response matches the contract the frontend expects."""
+    if not isinstance(obj, dict):
+        raise ValueError(f"expected dict, got {type(obj).__name__}")
+    if "answer" not in obj or not isinstance(obj["answer"], str):
+        raise ValueError("missing or non-string 'answer'")
+    obj.setdefault("confidence", "medium")
+    obj.setdefault("event_ids", [])
+    return obj
+
+
 def call_k2(log_text: str, question: str) -> dict | None:
+    """K2 Think V2 primary path. Returns None on any failure so the caller falls back."""
     if not (K2_ENDPOINT and K2_API_KEY):
         return None
     try:
         r = httpx.post(
             K2_ENDPOINT,
             json={
-                "model": "k2-think-v2",
+                "model": K2_MODEL,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": f"Event log:\n{log_text}\n\nQuery: {question}"},
@@ -95,24 +179,61 @@ def call_k2(log_text: str, question: str) -> dict | None:
             timeout=15.0,
         )
         r.raise_for_status()
-        data = r.json()
-        content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
+        content = r.json()["choices"][0]["message"]["content"]
+        return _validate_answer(_extract_json(content))
     except Exception as exc:
-        print(f"[k2] failed, falling back: {exc}", file=sys.stderr)
+        _log("k2", f"failed → falling back to Claude: {exc}")
         return None
 
+
 def call_claude(log_text: str, question: str) -> dict:
+    """Claude 4.7 failover path.
+
+    First attempt: normal call. If response doesn't parse, send one repair
+    follow-up asking for strict JSON. If that still fails, return the safe
+    fallback so the UI never crashes.
+    """
+    if not ANTHROPIC_API_KEY:
+        _log("claude", "ANTHROPIC_API_KEY missing → returning safe fallback")
+        return dict(_SAFE_FALLBACK)
+
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
-    resp = client.messages.create(
-        model="claude-opus-4-7",
-        max_tokens=400,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"Event log:\n{log_text}\n\nQuery: {question}"}],
-    )
-    text = "".join(block.text for block in resp.content if block.type == "text").strip()
-    text = text.replace("```json", "").replace("```", "").strip()
-    return json.loads(text)
+    user_msg = f"Event log:\n{log_text}\n\nQuery: {question}"
+
+    try:
+        resp = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=400,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        try:
+            return _validate_answer(_extract_json(text))
+        except ValueError:
+            _log("claude", "first response didn't parse → repair retry")
+    except Exception as exc:
+        _log("claude", f"first call failed → repair retry: {exc}")
+        text = ""
+
+    # Repair retry: explicit "JSON only" nudge, feeding the bad response back.
+    try:
+        resp = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=400,
+            system=SYSTEM_PROMPT,
+            messages=[
+                {"role": "user", "content": user_msg},
+                {"role": "assistant", "content": text or "{}"},
+                {"role": "user", "content": "Respond with the JSON object only. No prose, no fences."},
+            ],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        return _validate_answer(_extract_json(text))
+    except Exception as exc:
+        _log("claude", f"repair retry failed → safe fallback: {exc}")
+        return dict(_SAFE_FALLBACK)
+
 
 def query(question: str) -> dict:
     events = load_recent_events()
@@ -120,12 +241,15 @@ def query(question: str) -> dict:
 
     result = call_k2(log_text, question)
     if result is not None:
-        result["_model"] = "k2-think-v2"
+        result["_model"] = K2_MODEL
+        _log("k2", "ok")
         return result
 
     result = call_claude(log_text, question)
-    result["_model"] = "claude-opus-4-7"
+    result["_model"] = CLAUDE_MODEL
+    _log("claude", "ok")
     return result
+
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -133,6 +257,7 @@ def main() -> None:
         sys.exit(1)
     question = " ".join(sys.argv[1:])
     print(json.dumps(query(question), indent=2))
+
 
 if __name__ == "__main__":
     main()
