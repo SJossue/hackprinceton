@@ -120,25 +120,30 @@ def _mock_events() -> list[EventRow]:
 
     Anchored to relative offsets from `now` so the timeline is always
     coherent regardless of what time the demo runs:
-      - morning meds: ~9 hours ago
+      - morning meds: ~9 hours ago (pill bottle on desk → taking_pills)
       - person traffic: ~6 hours ago
-      - keys picked up: ~4 hours ago
-      - water placed: ~2 hours ago
-      - judge places book: ~3 minutes ago
+      - keys picked up: ~4 hours ago (from the desk)
+      - book placed on the chair: ~2 hours ago
+      - judge places phone: ~3 minutes ago (on the desk)
       - person leaves: ~1 minute ago
+
+    Taxonomy matches pi/capture.py after the spatial-grounding rework:
+      - HERO_OBJECTS: cell phone, bottle (pill bottle), remote (keys), book, person
+      - ACTION_RULES: taking_pills, using_phone, reading
+      - location: resolved against SURFACES = {dining table, chair}
 
     Returned in chronological order (oldest first) to match how
     `load_recent_events` delivers real rows to `format_log`.
     """
     now = datetime.now().timestamp()
     return [
-        EventRow(1, now - 9 * 3600,        "object_picked_up", "scissors"),     # pill bottle stand-in
-        EventRow(2, now - 9 * 3600 + 15,   "action_detected",  "drinking_cup"),
+        EventRow(1, now - 9 * 3600,        "object_placed",    "bottle",       "the desk"),   # pill bottle on desk
+        EventRow(2, now - 9 * 3600 + 60,   "action_detected",  "taking_pills"),               # actually took them
         EventRow(3, now - 6 * 3600,        "person_entered",   "person"),
         EventRow(4, now - 6 * 3600 + 60,   "person_left",      "person"),
-        EventRow(5, now - 4 * 3600,        "object_picked_up", "remote"),       # keys stand-in
-        EventRow(6, now - 2 * 3600,        "object_placed",    "bottle"),
-        EventRow(7, now - 180,             "object_placed",    "book"),
+        EventRow(5, now - 4 * 3600,        "object_picked_up", "remote",       "the desk"),   # keys from desk
+        EventRow(6, now - 2 * 3600,        "object_placed",    "book",         "the chair"),  # book on chair
+        EventRow(7, now - 180,             "object_placed",    "cell phone",   "the desk"),   # phone on desk
         EventRow(8, now - 60,              "person_left",      "person"),
     ]
 
@@ -153,10 +158,15 @@ def _mock_events() -> list[EventRow]:
 #
 # Do NOT rewrite labels at the ingestion layer (that would violate the
 # capture.py ⇄ rewind.db ⇄ backend contract). Translate at the seam only.
+# Keyed on pi/capture.py's HERO_OBJECTS after the spatial-grounding rework.
+# "bottle" is now the single stand-in for the pill bottle (COCO has no pill
+# class; `scissors` and `cup` are no longer hero objects). "remote" remains
+# the stand-in for keys. Unknown labels fall through untranslated, so
+# future hero additions (e.g. "cell phone" → "phone") can be added here
+# without touching callers.
 DISPLAY_LABELS: dict[str, str] = {
-    "scissors":  "pill bottle",
+    "bottle":    "pill bottle",
     "remote":    "keys",
-    "cup":       "water glass",
 }
 
 

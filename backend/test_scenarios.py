@@ -31,7 +31,8 @@ SCENARIOS: list[tuple[str, str]] = [
     ("What objects have been picked up today?", "real"),
     ("When did the last person leave?",         "real"),
     ("What was the last thing placed down?",     "real"),
-    ("Has anyone been drinking from a cup?",     "real"),
+    ("Did I take my pills this morning?",        "real"),
+    ("Where are my keys?",                       "real"),
     ("Where is my laptop?",                      "fallback"),
 ]
 
