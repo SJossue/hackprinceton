@@ -34,14 +34,31 @@ Defined in `capture.py` at `HERO_OBJECTS`. We use COCO stand-ins for objects COC
 | Demo object | COCO label | Notes |
 |---|---|---|
 | Keys | `remote` | Similar size/material; COCO has no "keys" class |
-| Pill bottle | `scissors` | Tuned for the meds demo |
+| Pill / supplement bottle | `bottle` | `bottle` is repurposed for meds — COCO has no pill class, and keeping two `bottle`-shaped heroes would be ambiguous. `taking_pills` trigger. |
 | Phone | `cell phone` | Native |
-| Water bottle | `bottle` | Native |
-| Cup | `cup` | Drinking-action trigger |
 | Book | `book` | Native |
-| Person | `person` | Drinking-action requires person + drink overlap |
+| Person | `person` | Required for all action rules |
 
 **Tune Saturday afternoon in venue lighting on exactly these objects.** Generalization isn't needed — we need perfection on rehearsed objects.
+
+## Surfaces (spatial grounding)
+
+Defined in `capture.py` at `SURFACES`. These are detected every frame but do **not** emit events — they exist so that when a hero event fires we can answer *"where is it?"* with a friendly name like `"the desk"`. Demo venue is a college classroom, so the initial set is tight:
+
+| Demo surface | COCO label | Friendly name |
+|---|---|---|
+| Desk | `dining table` | `the desk` |
+| Chair | `chair` | `the chair` |
+
+Add more (blackboard, whiteboard, shelf, etc.) as needed — edit the `SURFACES` dict.
+
+**Grounding heuristic** (see `resolve_location` in `capture.py`): when an object is confirmed,
+
+1. If its **bottom-center** falls inside a surface bbox → that surface (prefer the smallest containing surface, so "on the chair" wins over "on the desk" when both contain the object).
+2. Else, the surface with the highest IoU against the object bbox (> 0.05).
+3. Else, `None`.
+
+The last resolved location is cached per track, so a `object_picked_up` event carries the surface it was *last seen on* even if that surface isn't visible at pickup time.
 
 ## Event taxonomy (what the extractor emits)
 
@@ -51,19 +68,29 @@ Defined in `capture.py` at `HERO_OBJECTS`. We use COCO stand-ins for objects COC
 | `object_picked_up` | A previously-confirmed object disappears for ≥10 frames (~2s) | `scissors` |
 | `person_entered` | A `person` track stably appears | `person` |
 | `person_left` | A confirmed `person` track disappears | `person` |
-| `action_detected` | Simple rule: person bbox + drink bbox overlap in upper third | `drinking_bottle`, `drinking_cup` |
+| `action_detected` | Person + hero object in a target region of the person bbox | `taking_pills`, `using_phone`, `reading` |
 
-Debounced 8 s on drinking so we don't spam the log.
+Action rules (see `ACTION_RULES` in `capture.py`) — each debounced 8 s independently:
+
+| Action | Trigger object | Region of person bbox |
+|---|---|---|
+| `taking_pills` | `bottle` (used as pill/supplement bottle) | upper third (head/mouth) |
+| `using_phone` | `cell phone` | upper third |
+| `reading` | `book` | middle third (torso/hands-in-lap) |
 
 ## Integration contract (don't change without pinging Jossue)
 
-`capture.py` writes each event to `rewind.db` then POSTs it to the backend so the dashboard sees it live:
+`capture.py` writes each event to `rewind.db` then POSTs it to the backend so the dashboard sees it live. The payload now includes a `location` field (may be `null`):
 
 ```python
 POST http://127.0.0.1:8000/internal/event_added
 { "id": 42, "ts": 1713..., "event_type": "object_placed",
-  "object": "bottle", "track_id": 17, "thumb_path": "thumbs/....jpg" }
+  "object": "bottle", "track_id": 17,
+  "thumb_path": "thumbs/....jpg",
+  "location": "the desk" }   # ← new; null for person events and ungrounded objects
 ```
+
+SQLite schema gained a `location TEXT` column on `events`. Existing DBs are migrated in-place by `init_db()` (additive `ALTER TABLE`), so nothing to run manually.
 
 If the server is offline, `httpx.post(...)` swallows the exception and the loop keeps running. Events are still written to SQLite and will appear on the next `GET /events` fetch.
 
