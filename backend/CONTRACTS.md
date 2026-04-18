@@ -241,6 +241,60 @@ No body. Runs the Eragon proactive agent. Returns `Alert[]` — may be empty.
 
 ---
 
+## 4b. Gotchas — loud invariants, hard-won
+
+Things that will cost you 20 minutes if you forget them. Read this section before you ping me with "why is X doing Y."
+
+### The `/internal/*` same-machine invariant
+
+`capture.py` and the backend **must run on the same machine** (127.0.0.1 both ways). The 403 middleware in `server.py` enforces this for `/internal/*` — it is a feature, not a bug. If you're ever tempted to run `capture.py` on a laptop pushing to a Pi backend for "easier dev":
+
+- Don't. SSH to the Pi and run it there.
+- Or, if you *really* need remote dev, SSH-tunnel local port 8000 to the Pi's 8000, which makes your laptop's `127.0.0.1:8000` the Pi's backend — and the middleware is happy because the traffic arrives at the Pi as localhost.
+- Do not remove the middleware "just for testing." It has prevented one real class of prompt-injection attack (a fake event arriving from the venue WiFi while judges are near the device).
+
+### Timestamp units
+
+`ts` is **Unix seconds as float**, not milliseconds. In Python: `time.time()`. In JS: `Date.now() / 1000`, or `new Date(ts * 1000)` to render. `ts * 1000` for `new Date()` is the single most common forget. Every example in `backend/examples/` uses seconds; compare against them if unsure.
+
+### WebSocket dedupe
+
+On first connect the frontend does `GET /events?limit=80` *then* opens the WebSocket. Events generated in the millisecond gap can arrive on both paths. **Dedupe on `id`** — which is monotonically increasing from SQLite's `AUTOINCREMENT`, so it's safe as a Set key. This is documented in §2 but people miss it.
+
+### Single-event JSON fixtures vs. the in-code timeline
+
+`backend/examples/*.json` are **single-event** fixtures — one row per file, for schema reference, Jeeyan's MSW mocks, and `curl -d @file` smoke tests. The rolling 8-event demo timeline lives in `query.py::_mock_events()` because its timestamps are computed *relative to `now`* so the demo stays coherent whatever time of day it runs. If you want a saved timeline for deterministic tests, build a separate fixture file — don't try to baké time-relative events into a static JSON.
+
+### `_model: "fallback"` in a response is not a bug
+
+It means the LLM path failed (K2 error + Claude error, or both unreachable). The response is still valid-shape. The UI should surface it honestly rather than hide it. If you're seeing it unexpectedly, check the server logs — `[claude]` / `[k2]` tags tell you which leg actually broke.
+
+### `event_ids` may be empty
+
+Valid-shape response includes `"event_ids": []` — the model genuinely couldn't point at supporting events (common on the safe-fallback path, also happens when the model answers from general inference rather than specific log entries). Don't assume non-empty.
+
+### Port 8000 can clash
+
+If something else on the Pi is on 8000 (monitoring, another project), override with `uvicorn server:app --port 8001` and update **both** `pi/capture.py::SERVER_BASE` and `frontend/.env.local::NEXT_PUBLIC_REWIND_API` to match. Ping Sunghoo + Jeeyan before the change — one of them will forget.
+
+---
+
+## 4c. Adding a new `event_type`
+
+**Default answer: don't.** The five in §1 cover every demo scenario. If at 3 AM Saturday you think you need `object_moved` or `cooking_detected`, first ask: can you emit one of the existing types with a different `object` label? `action_detected` with `object: "cooking_pan"` probably covers 80% of what you wanted.
+
+If you genuinely need one (which forces a contract bump), the migration path — in order, same commit bundle:
+
+1. **Update this file.** Add the new value to the §1 enum table with its semantics, and the `object` convention row if relevant. Add the value to the §5 validation one-liner's allowed set.
+2. **Add a canonical example** under `backend/examples/event_<new_type>.json`.
+3. **Update `query.py`** — the prompt template doesn't list event types but `format_log` needs no change; no code touch usually needed unless the agent logic keys off `event_type`.
+4. **Ping Sunghoo + Jeeyan in Slack** with the commit SHA. Sunghoo updates `capture.py` to emit it (if it's a CV event). Jeeyan adds any distinctive rendering if needed.
+5. **Bump the version marker at the bottom** — `v1 → v2`, note what changed.
+
+One PR, three files minimum (`CONTRACTS.md`, `examples/event_*.json`, optionally `query.py`). If either of the other two owners needs more than 10 minutes to integrate, it means the event type wasn't actually necessary — reconsider.
+
+---
+
 ## 5. Validation one-liners
 
 Sunghoo — verify a capture.py output payload:

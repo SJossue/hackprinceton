@@ -36,7 +36,7 @@ curl -X POST http://localhost:8000/query -H 'Content-Type: application/json' \
 curl -X POST http://localhost:8000/agent/check
 ```
 
-**Exit criteria:** you have personally seen every endpoint respond correctly at least once, and you've read 3 query answers aloud and asked yourself "does this sound like magic or like a chatbot?" Anything that feels robotic is a Phase D ticket.
+**Exit criteria:** you have personally seen every endpoint respond correctly at least once, and you've **read every query answer aloud at demo pace**. LLM output that reads fine on screen often sounds terrible spoken — and the demo has TTS, so voice is what judges experience. Anything that feels robotic or clinical → drop it into [`prompt_debt.md`](./prompt_debt.md) verbatim (question + answer + what felt wrong). That file is the Phase D queue.
 
 **Status:** in progress (your turn — test_scenarios.py needs your API key).
 
@@ -67,8 +67,9 @@ Not all items are equal — starred ones are demo-critical, the rest are polish.
 - [x] **★ Localhost restriction on `/internal/*`** (done in Phase B alongside the contract).
 - [x] **★ Hard per-call timeouts** on K2 (8 s) and Claude (10 s). Repair retry skipped on timeout.
 - [x] **★ Safe fallback labeled `_model: "fallback"`** so the UI can show it honestly.
-- [ ] **★ Structured logging.** Replace hot-path `print()` with stdlib `logging`. Minimum events: every `/query` received (with question + timestamp), every LLM call (model + latency), every fallback triggered, every validation failure. Log to `backend/rewind.log` rotating by size.
-- [ ] **★ `REWIND_DEMO_MODE` env var.** When set: skip K2 (Claude-only), tighten timeouts, inject `_mock_events()` transparently if the event log is empty or >30 min stale, INFO-level logging. You turn this on for judging, never during dev.
+- [ ] **★ Structured logging with a three-level split that tells the failure layer at a glance.** Stdlib `logging` to `backend/rewind.log` (rotating). INFO = request received/answered, model used, latency. WARN = fallback triggered, K2 failover, slow request (>5 s), repair-retry used. ERROR = safe fallback actually served, malformed LLM output after repair, unrecoverable exception. `tail -f backend/rewind.log` on a second monitor at demo time is a legit production-feel moment — no need to mention it, just let judges notice.
+- [ ] **★ Two env flags, independent.** `REWIND_DEMO_MODE` → Claude-only, tightened timeouts, pre-warmed fallback answers (safety). `REWIND_FIXTURE_MODE` → inject `_mock_events()` transparently when SQLite is empty or >30 min stale (fake data). Split so at judging you can enable DEMO_MODE without FIXTURE_MODE if the camera's alive; flip FIXTURE_MODE additionally only when live events glitch. Two dials.
+- [ ] **Classify Anthropic exceptions** as hard (401, 404) vs. transient (529 overloaded, connection reset). Hard → immediate fallback. Transient → one jittered retry at ~2 s, then fallback. Not urgent; noted for when you touch `call_claude` anyway.
 - [ ] Rate limit on `/query`: 1 request per 500 ms per client IP. Excess returns a clean "still thinking" response instead of a double-answer during demo.
 - [ ] Degradation ladder documented in one place — already covered in [`CONTRACTS.md` §4](./CONTRACTS.md#4-degradation-ladder-what-the-user-sees-when-things-go-wrong).
 
@@ -80,7 +81,7 @@ Not all items are equal — starred ones are demo-critical, the rest are polish.
 
 **Goal:** answers feel like magic, not like a chatbot. This is where the product actually wins.
 
-- [ ] **Prompt engineering pass.** Take 10 representative questions through the real pipeline. Grade each by: references specific events naturally (vs. just restates the answer), uses relative time appropriately (~20 min ago beats `14:47:33`), expresses uncertainty honestly, stays in voice (warm, calm, factual — never clinical, never cheerful). Iterate `SYSTEM_PROMPT` until 9/10 pass.
+- [ ] **Prompt engineering pass.** Start from [`prompt_debt.md`](./prompt_debt.md) — the failures Phase A collected become the test cases. Save current prompt as `prompts/v1.txt` before editing; write the new one as `prompts/v2.txt`; run both against the same 15 questions and diff. Levers to pull: persona framing, 2–3 few-shot Q-log-A examples, explicit anti-patterns forbidden ("do not begin with 'Based on'", "do not refer to 'the event log'"), pre-compute relative time in Python rather than asking the LLM to do it, tie `confidence` field to concrete criteria (`high` = directly stated in one recent event, `medium` = inferred from 2–3, `low` = ambiguous or guessing).
 - [ ] **Context assembly.** Today `load_recent_events` sends the last 80 events. Add a `build_context(events, question)` that lightly classifies the question into `{find_object, recall_action, timeline, catch_all}` and filters appropriately (today-only for med questions, wider time window around the named object for find-my-X, etc.). One small classifier call before the main query — huge answer-quality win.
 - [ ] **Temporal reasoning test suite** (`test_temporal.py`): "when did X last happen?", "how long has X been there?", "did X happen before or after Y?", "anything unusual in the last hour?" These are the multi-step cases K2 is designed for.
 - [ ] **Answer formatting discipline.** Lock responses to 1–2 sentences. Long answers wreck demo pacing. If the model wants to say more, cut it. The answer card fits one paragraph; the SenseCAP fits 2 lines.
@@ -161,6 +162,7 @@ When you hit something specific — a prompt that won't behave, a contract ambig
 
 <!-- Append one line per meaningful step. Most recent on top. -->
 
+- **2026-04-18** — _Phase B tightening._ CONTRACTS.md now has §4b Gotchas (same-machine invariant, ts units, WS dedupe, fixtures-vs-timeline, etc.) and §4c Adding-a-new-event-type migration path. `prompt_debt.md` scaffold created as the Phase D queue. Phase C plan refined: log-level split (INFO/WARN/ERROR), two independent env flags (DEMO vs FIXTURE), Anthropic exception classification note.
 - **2026-04-18** — _Phase B complete._ `CONTRACTS.md` with three wire schemas + degradation ladder + validation one-liners. 10 JSON fixtures in `examples/`. Code aligned: localhost middleware on `/internal/*` in `server.py`; `call_claude` owns its `_model` (so safe fallback is labeled `"fallback"` truthfully); per-call timeouts K2=8s, Claude=10s; repair retry skipped on hard errors.
 - **2026-04-18** — _Roadmap restructured_ around the reliability-floor meta-principle (A–H phases).
 - **2026-04-18** — _Phase B.0 (old plan):_ `query.py` hardened. `server.py` has `/health` + startup banner. `test_scenarios.py` ready. Commits: `d06cdbb` (plan), `11d5b1e` (query), `4a6083e` (health), `2c8caef` (tests), `8d29857` (progress log).
