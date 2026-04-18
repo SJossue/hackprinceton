@@ -273,6 +273,10 @@ It means the LLM path failed (K2 error + Claude error, or both unreachable). The
 
 Valid-shape response includes `"event_ids": []` — the model genuinely couldn't point at supporting events (common on the safe-fallback path, also happens when the model answers from general inference rather than specific log entries). Don't assume non-empty.
 
+### K2 is "configured" iff both vars look real
+
+`K2_ENDPOINT` and `K2_API_KEY` are treated as configured only when both are non-empty **and** neither contains `...` (the placeholder from `.env.example`). If you leave the example's `https://.../v1/chat/completions` in `.env` intact, the backend correctly treats K2 as unset and routes to Claude — the banner, `/health`, and `_model` in responses all tell the truth. To enable K2, put real values in; don't half-fill. Generalization for later: config loading could treat empty-string as unset universally and drop the `...` sentinel entirely — noted as a Phase C polish.
+
 ### Port 8000 can clash
 
 If something else on the Pi is on 8000 (monitoring, another project), override with `uvicorn server:app --port 8001` and update **both** `pi/capture.py::SERVER_BASE` and `frontend/.env.local::NEXT_PUBLIC_REWIND_API` to match. Ping Sunghoo + Jeeyan before the change — one of them will forget.
