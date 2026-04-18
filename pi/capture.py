@@ -363,6 +363,8 @@ def main() -> None:
                     label = model.names[cls]
                     conf = float(box.conf[0])
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    if label in HERO_OBJECTS:
+                        print(f"  [dbg] {label:15s} conf={conf:.3f}  floor={HERO_OBJECTS[label]}")
                     if label in HERO_OBJECTS and conf >= HERO_OBJECTS[label]:
                         detections.append(
                             TrackedDetection(tid, label, conf, (x1, y1, x2, y2))
