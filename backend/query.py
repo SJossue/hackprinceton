@@ -570,19 +570,46 @@ def call_claude(log_text: str, question: str) -> dict:
         return _fallback()
 
 
-def query(question: str) -> dict:
+def query(question: str, model_preference: str | None = None) -> dict:
     """Answer a user question against the event log. Always returns a validated dict.
 
-    Model selection:
-      - K2 primary when K2_ENDPOINT + K2_API_KEY are set.
-      - Claude failover otherwise (or on any K2 error).
-      - Safe fallback when both fail; response carries `_model: "fallback"`.
+    Model selection (in priority order):
+      1. ``model_preference`` (per-request override from the UI):
+         - ``"k2"``     → force K2. On any K2 failure, still fall back to
+                          Claude so the demo path stays alive.
+         - ``"claude"`` → skip K2 entirely, go straight to Claude.
+         - Anything else (or None) → fall through to default routing.
+      2. Default routing:
+         - ``REWIND_DEMO_MODE`` on → Claude-only path (demo safety dial).
+         - ``K2_ENDPOINT`` + ``K2_API_KEY`` set → K2 primary, Claude failover.
+         - Otherwise → Claude only.
+      3. ``_SAFE_FALLBACK`` if every path fails; response carries
+         ``_model: "fallback"``.
 
     See CONTRACTS.md §3c for the response shape and the _model enum.
     """
     events = load_recent_events()
     log_text = format_log(events)
 
+    # ---- User-driven override (UI model selector) ----
+    pref = (model_preference or "").strip().lower()
+    if pref == "claude":
+        _log("query", "user chose Claude → skipping K2")
+        return call_claude(log_text, question)
+    if pref == "k2":
+        _log("query", "user chose K2 → forcing K2 path")
+        k2_result = call_k2(log_text, question)
+        if k2_result is not None:
+            k2_result["_model"] = K2_MODEL
+            _log("k2", "ok")
+            return k2_result
+        # User asked for K2 but it failed. Fall back to Claude so the demo
+        # doesn't produce a blank answer, but log WARN so the operator can
+        # tell the user-requested model didn't actually answer.
+        _log("query", "K2 requested but failed — falling back to Claude", "warn")
+        return call_claude(log_text, question)
+
+    # ---- Default routing (no override) ----
     # DEMO_MODE short-circuits the K2 primary path entirely. Reason: K2 is
     # useful when it works, but at the demo moment we prefer a known-good
     # Claude call over a K2 failover dance that might eat a timeout.

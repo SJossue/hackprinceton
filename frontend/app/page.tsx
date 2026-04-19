@@ -324,6 +324,10 @@ export default function Page() {
   const [agentChecked,  setAgentChecked]  = useState(false);
   const [inputFocused,  setInputFocused]  = useState(false);
   const [dark,          setDark]          = useState(true);
+  // Per-request model selector. "auto" lets the backend route by default
+  // (K2 primary / Claude failover). "k2" / "claude" force the path so
+  // judges can watch both reasoning engines side-by-side on the same query.
+  const [modelPref,     setModelPref]     = useState<"auto"|"k2"|"claude">("auto");
 
   // Apply theme to <html> and persist
   useEffect(() => {
@@ -388,8 +392,13 @@ export default function Page() {
     const query = (q??question).trim();
     if (!query) return;
     setLoading(true); setAnswer(null);
+    // Only send the `model` field when the user explicitly picked one.
+    // Omitting it on "auto" lets the backend's default routing (which
+    // honors REWIND_DEMO_MODE and k2_configured) take over.
+    const body: { question: string; model?: "k2"|"claude" } = { question: query };
+    if (modelPref !== "auto") body.model = modelPref;
     try {
-      const r = await fetch(`${API_BASE}/query`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:query})});
+      const r = await fetch(`${API_BASE}/query`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       if (!r.ok) throw new Error();
       const data:Answer = await r.json();
       setAnswer(data); speak(data.answer);
@@ -400,7 +409,7 @@ export default function Page() {
       setAnswer({answer:ans, confidence:matched?"high":"low", event_ids:matched?[42,43]:[], _model:"mock"});
       speak(ans);
     } finally { setLoading(false); }
-  }, [question]);
+  }, [question, modelPref]);
 
   function toggleListen() {
     const SR = getSR();
@@ -609,6 +618,46 @@ export default function Page() {
                 🎤 Listening… speak your question
               </p>
             )}
+
+            {/* Model selector — auto (default routing), K2 Think V2, or Claude */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+              <span style={{
+                fontSize:"0.72rem",color:"var(--text-muted)",
+                fontFamily:"'JetBrains Mono',monospace",
+                textTransform:"uppercase",letterSpacing:"0.1em",
+              }}>
+                reasoning engine
+              </span>
+              <div style={{display:"flex",gap:6,background:"var(--surface-2)",padding:4,borderRadius:10,border:"1px solid var(--border-strong)"}}>
+                {([
+                  {k:"auto"   as const, label:"Auto",   hint:"default routing (K2 primary, Claude failover)"},
+                  {k:"k2"     as const, label:"K2",     hint:"force K2 Think V2 — Claude still catches on K2 failure"},
+                  {k:"claude" as const, label:"Claude", hint:"force Claude 4.7 — skip K2 entirely"},
+                ]).map(({k,label,hint})=>{
+                  const active = modelPref===k;
+                  return (
+                    <button key={k} onClick={()=>setModelPref(k)} title={hint} style={{
+                      padding:"6px 14px",borderRadius:7,
+                      fontFamily:"'Syne',sans-serif",fontSize:"0.8rem",fontWeight:600,
+                      background:active?"var(--emerald)":"transparent",
+                      color:active?"#000":"var(--text-secondary)",
+                      border:"none",cursor:"pointer",
+                      transition:"all 0.15s",
+                    }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {modelPref!=="auto" && (
+                <span style={{
+                  fontSize:"0.72rem",color:"var(--text-muted)",
+                  fontFamily:"'JetBrains Mono',monospace",
+                }}>
+                  next query → {modelPref==="k2"?"MBZUAI-IFM/K2-Think-v2":"claude-opus-4-7"}
+                </span>
+              )}
+            </div>
 
             {/* Preset chips */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>

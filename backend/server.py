@@ -74,6 +74,14 @@ state_clients: set[WebSocket] = set()
 
 class QueryIn(BaseModel):
     question: str
+    # Optional per-request model selector so the UI can expose a
+    # "Claude vs K2" toggle for side-by-side comparison. Values:
+    #   "k2"     — force the K2 path. On K2 failure, falls back to Claude
+    #              (we still protect demo reliability).
+    #   "claude" — skip K2 entirely, go straight to Claude.
+    #   None     — default routing, honoring REWIND_DEMO_MODE + k2_configured.
+    # Any unknown value is treated as None (default routing).
+    model: str | None = None
 
 
 class EventIn(BaseModel):
@@ -176,12 +184,12 @@ def get_events(limit: int = 80) -> list[dict[str, Any]]:
 @app.post("/query")
 async def post_query(body: QueryIn) -> dict[str, Any]:
     t0 = time.perf_counter()
-    _LOG.info("/query received: %r", body.question)
+    _LOG.info("/query received: %r model_pref=%r", body.question, body.model)
     # Ambient state: thinking → answer (or idle on failure). Phone-stand
     # and SenseCAP subscribers get a visible UI transition even when the
     # query arrives via HTTP instead of a button press.
     await broadcast_state("thinking")
-    result = query_mod.query(body.question)
+    result = query_mod.query(body.question, model_preference=body.model)
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
     model = result.get("_model", "unknown")
