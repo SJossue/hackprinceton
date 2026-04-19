@@ -70,7 +70,10 @@ def k2_configured() -> bool:
     return True
 
 CLAUDE_MODEL = "claude-opus-4-7"
-K2_MODEL = "k2-think-v2"
+# Model ID per K2's API docs — includes the org prefix, must match exactly
+# or the endpoint 400s. Shows up in _model tags on answers as this string,
+# which is honest (it's what answered) even if long.
+K2_MODEL = "MBZUAI-IFM/K2-Think-v2"
 
 SYSTEM_PROMPT = """You are the reasoning layer of Rewind, an on-device \
 episodic-memory system for a physical space. You receive a structured event log \
