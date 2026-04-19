@@ -14,9 +14,11 @@ No integration with other people's code tonight. Solo piece.
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 import cv2
@@ -34,10 +36,11 @@ SERVER_BASE = "http://127.0.0.1:8000"  # Jossue's FastAPI
 # Hero objects: YOLO COCO labels we care about, with per-label confidence floor.
 # Tune Saturday on exactly these objects in venue lighting.
 HERO_OBJECTS = {
-    "cell phone": 0.40,
-    "bottle": 0.45,        # used as pill/supplement bottle (COCO has no pill class)
-    "remote": 0.40,        # stand-in for keys (COCO doesn't have "keys")
+    "cell phone": 0.25,
+    "bottle": 0.22,        # used as pill/supplement bottle (COCO has no pill class)
+    "remote": 0.40,        # stand-in for keys (COCO doesn't have "keys") — reported as "keys"
     "book": 0.45,
+    "backpack": 0.40,
     "person": 0.50,
 }
 
@@ -49,14 +52,52 @@ HERO_OBJECTS = {
 # surface and works in practice (same stand-in pattern as HERO_OBJECTS).
 # Add more surfaces (blackboard, whiteboard, etc.) later.
 SURFACES = {
-    "dining table": ("the desk",  0.35),
-    "chair":        ("the chair", 0.35),
+    "dining table": ("the desk",  0.25),
+    "chair":        ("the chair", 0.25),
 }
 
 CAMERA_INDEX = 0
 TARGET_FPS = 5
 FRAME_W, FRAME_H = 640, 480
 TRACKER_CFG = "bytetrack.yaml"   # ultralytics built-in
+STREAM_PORT = 9090               # MJPEG stream at http://<pi-ip>:9090
+
+# ---------- MJPEG debug stream ---------------------------------------------
+
+_stream_frame: bytes = b""
+_stream_lock = threading.Lock()
+
+def _update_stream_frame(jpg_bytes: bytes) -> None:
+    global _stream_frame
+    with _stream_lock:
+        _stream_frame = jpg_bytes
+
+class _MJPEGHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
+        try:
+            while True:
+                with _stream_lock:
+                    frame = _stream_frame
+                if frame:
+                    self.wfile.write(b"--frame\r\n")
+                    self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
+                    self.wfile.write(frame)
+                    self.wfile.write(b"\r\n")
+                time.sleep(0.2)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass  # suppress request logs
+
+def _start_stream_server() -> None:
+    server = HTTPServer(("0.0.0.0", STREAM_PORT), _MJPEGHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    print(f"[rewind] debug stream at http://<pi-ip>:{STREAM_PORT}")
 
 # ---------- Domain types ---------------------------------------------------
 
@@ -161,13 +202,13 @@ def resolve_location(
     if not surfaces:
         return None
     ox1, oy1, ox2, oy2 = obj_bbox
-    obj_bottom = ((ox1 + ox2) // 2, oy2)
+    obj_center = ((ox1 + ox2) // 2, (oy1 + oy2) // 2)
 
-    # Rule 1: bottom-center containment (prefer smaller surfaces = more specific)
+    # Rule 1: center containment (prefer smaller surfaces = more specific)
     containing = [
         s for s in surfaces
-        if s.bbox[0] <= obj_bottom[0] <= s.bbox[2]
-        and s.bbox[1] <= obj_bottom[1] <= s.bbox[3]
+        if s.bbox[0] <= obj_center[0] <= s.bbox[2]
+        and s.bbox[1] <= obj_center[1] <= s.bbox[3]
     ]
     if containing:
         containing.sort(key=lambda s: (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]))
@@ -192,7 +233,7 @@ ACTION_RULES: tuple[tuple[str, str, str], ...] = (
     # (action_name,         object_label,  region)
     ("taking_pills",        "bottle",      "upper"),   # `bottle` is repurposed as pill bottle
     ("using_phone",         "cell phone",  "upper"),
-    ("reading",             "book",        "middle"),
+    ("reading",             "notebook",    "middle"),
 )
 
 ACTION_DEBOUNCE_S = 8.0
@@ -343,6 +384,7 @@ def main() -> None:
     conn = init_db()
     extractor = EventExtractor()
     frame_period = 1.0 / TARGET_FPS
+    _start_stream_server()
 
     print("[rewind] running. Ctrl-C to quit.")
     try:
@@ -353,7 +395,7 @@ def main() -> None:
                 continue
 
             # Track mode: persistent IDs across frames (ByteTrack)
-            results = model.track(frame, persist=True, tracker=TRACKER_CFG, verbose=False)[0]
+            results = model.track(frame, persist=True, tracker=TRACKER_CFG, verbose=False, conf=0.20, imgsz=320)[0]
 
             detections: list[TrackedDetection] = []
             surfaces: list[SurfaceDetection] = []
@@ -363,9 +405,13 @@ def main() -> None:
                     label = model.names[cls]
                     conf = float(box.conf[0])
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    if label in HERO_OBJECTS:
+                        dbg_label = "keys" if label == "remote" else label
+                        print(f"  [dbg] {dbg_label:15s} conf={conf:.3f}  floor={HERO_OBJECTS[label]}")
                     if label in HERO_OBJECTS and conf >= HERO_OBJECTS[label]:
+                        display_label = "keys" if label == "remote" else "notebook" if label == "book" else label
                         detections.append(
-                            TrackedDetection(tid, label, conf, (x1, y1, x2, y2))
+                            TrackedDetection(tid, display_label, conf, (x1, y1, x2, y2))
                         )
                     # A label can be both a hero and a surface (e.g. "book"
                     # if we ever add it to SURFACES); keep surfaces separate.
@@ -375,6 +421,22 @@ def main() -> None:
                             surfaces.append(
                                 SurfaceDetection(label, pretty, (x1, y1, x2, y2))
                             )
+
+            # Draw bounding boxes on a copy for the debug stream
+            debug_frame = frame.copy()
+            for d in detections:
+                x1, y1, x2, y2 = d.bbox
+                color = (0, 255, 0) if d.label != "person" else (255, 0, 0)
+                cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(debug_frame, f"{d.label} #{d.track_id} {d.conf:.2f}",
+                            (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            for s in surfaces:
+                x1, y1, x2, y2 = s.bbox
+                cv2.rectangle(debug_frame, (x1, y1), (x2, y2), (0, 165, 255), 1)
+                cv2.putText(debug_frame, s.pretty, (x1, y1 - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+            _, jpg = cv2.imencode(".jpg", debug_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            _update_stream_frame(jpg.tobytes())
 
             for ev in extractor.step(detections, surfaces):
                 # Save thumbnail if we have bbox + the frame is "interesting"
