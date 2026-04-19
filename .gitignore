@@ -32,3 +32,6 @@ backend/audio/
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code personal settings (do not commit)
+.claude/
