@@ -116,9 +116,6 @@ def _status() -> dict[str, Any]:
             "k2": k2_on,
             "primary": "k2" if k2_on else "claude",
         },
-        "sms": {
-            "twilio": agent_mod.twilio_configured(),
-        },
         "tts": {
             "elevenlabs": tts_mod.tts_configured(),
         },
@@ -144,7 +141,6 @@ async def _banner() -> None:
         f"│  Claude: {'✓' if llm['claude'] else '✗'}  model={query_mod.CLAUDE_MODEL}",
         f"│  K2:     {'✓' if llm['k2'] else '✗'}  endpoint={query_mod.K2_ENDPOINT if llm['k2'] else '(unset)'}",
         f"│  Primary LLM: {llm['primary']}",
-        f"│  Twilio: {'✓ (sends real SMS)' if s['sms']['twilio'] else '✗ (drafts only)'}",
         f"│  ElevenLabs: {'✓ (speaks answers + alerts)' if s['tts']['elevenlabs'] else '✗ (silent ambient display)'}",
         demo_mode_str,
         "│  Docs: http://localhost:8000/docs",
