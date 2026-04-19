@@ -16,3 +16,13 @@ anthropic>=0.40
 
 # Env loading
 python-dotenv>=1.0
+
+# SMS delivery for Eragon agent (optional — if TWILIO_* env vars unset,
+# the agent degrades to draft-only and reports sent=false).
+twilio>=9.0
+
+# ElevenLabs is called via plain httpx (already a dep above) — no SDK needed.
+# POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}
+# Model: eleven_flash_v2_5 (low-latency, ~200ms first byte).
+# If ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID unset → TTS returns None and
+# answers are delivered text-only (no audio in the /ws/state broadcast).

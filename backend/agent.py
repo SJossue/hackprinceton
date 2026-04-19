@@ -22,6 +22,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Twilio config — all four needed for SMS delivery. Any missing → agent
+# returns the draft but `sent=false`, so the demo still tells a clean story
+# ("we drafted this, here's what it says") even when Twilio isn't wired up.
+TWILIO_SID         = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_TOKEN       = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+TWILIO_TO_NUMBER   = os.getenv("TWILIO_TO_NUMBER", "").strip()
+
+
+def twilio_configured() -> bool:
+    return all((TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM_NUMBER, TWILIO_TO_NUMBER))
+
+
+def send_sms(body: str) -> tuple[bool, str]:
+    """Send the caregiver SMS via Twilio. Fail-safe: any error → (False, reason).
+
+    Returns a tuple of (ok, detail). `detail` is the Twilio message SID on
+    success, or the exception string on failure. Never raises — the demo
+    path must stay live even when Twilio is down or the account is out of
+    trial credit.
+    """
+    if not twilio_configured():
+        return (False, "twilio not configured")
+    try:
+        from twilio.rest import Client as TwilioClient
+        client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+        msg = client.messages.create(
+            body=body,
+            from_=TWILIO_FROM_NUMBER,
+            to=TWILIO_TO_NUMBER,
+        )
+        return (True, msg.sid)
+    except Exception as exc:
+        return (False, str(exc))
+
 MOCK_CALENDAR = [
     {"event": "Morning medication", "scheduled": "08:00", "window_min": 60},
     {"event": "Evening medication", "scheduled": "18:00", "window_min": 60},
@@ -43,14 +78,22 @@ def check_medication_adherence() -> list[Alert]:
     today = now.strftime("%Y-%m-%d")
     alerts: list[Alert] = []
 
-    # Heuristic: "took medication" ≈ object_picked_up on a pill-bottle-like object
-    # (we're using "scissors" as a stand-in in the demo since COCO lacks pill bottles)
+    # Evidence that medication was taken, strongest signal first:
+    # 1. action_detected/taking_pills — the person+bottle-near-face rule in
+    #    capture.py's ACTION_RULES. Strongest evidence: we saw the gesture.
+    # 2. object_picked_up/bottle — weaker: pickup alone could be refilling,
+    #    moving, cleaning. Included because the action rule can miss frames.
+    #
+    # Legacy "scissors" stand-in is gone as of the spatial-grounding rework
+    # (HERO_OBJECTS narrowed; `bottle` now IS the pill-bottle stand-in).
     taken_times = []
     for ev in events:
         ev_date = datetime.fromtimestamp(ev.ts).strftime("%Y-%m-%d")
         if ev_date != today:
             continue
-        if ev.event_type == "object_picked_up" and ev.object in ("scissors", "bottle"):
+        if ev.event_type == "action_detected" and ev.object == "taking_pills":
+            taken_times.append(datetime.fromtimestamp(ev.ts))
+        elif ev.event_type == "object_picked_up" and ev.object == "bottle":
             taken_times.append(datetime.fromtimestamp(ev.ts))
 
     for dose in MOCK_CALENDAR:
@@ -96,7 +139,16 @@ def run() -> list[dict]:
     out = []
     for a in alerts:
         if a.suggested_action and a.suggested_action["type"] == "send_text":
-            a.suggested_action["draft"] = draft_caregiver_text(a)
+            draft = draft_caregiver_text(a)
+            a.suggested_action["draft"] = draft
+            # Attempt real delivery via Twilio. Fail-safe: if sending fails
+            # for any reason, surface the draft anyway so the dashboard +
+            # ambient display still tell a coherent story. `sent` makes it
+            # honest — judges see "drafted + sent ✓" vs. "drafted (send
+            # unavailable)" without any hand-waving.
+            sent_ok, detail = send_sms(draft)
+            a.suggested_action["sent"] = sent_ok
+            a.suggested_action["send_detail"] = detail
         out.append({
             "severity": a.severity,
             "title": a.title,

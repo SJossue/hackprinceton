@@ -25,10 +25,12 @@ from typing import Any
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import query as query_mod
 import agent as agent_mod
+import tts as tts_mod
 from observability import SLOW_REQUEST_MS, get_logger, journal_query
 
 _LOG = get_logger()
@@ -40,6 +42,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve ElevenLabs-generated MP3s. tts.speak() writes to backend/audio/,
+# this mount makes the files reachable at /audio/<filename>.mp3 for the
+# /status page (or any WS subscriber) to drop into <audio autoplay>.
+app.mount("/audio", StaticFiles(directory=str(tts_mod.AUDIO_DIR)), name="audio")
 
 _LOCALHOST_ADDRS = {"127.0.0.1", "localhost", "::1"}
 
@@ -109,7 +116,14 @@ def _status() -> dict[str, Any]:
             "k2": k2_on,
             "primary": "k2" if k2_on else "claude",
         },
+        "sms": {
+            "twilio": agent_mod.twilio_configured(),
+        },
+        "tts": {
+            "elevenlabs": tts_mod.tts_configured(),
+        },
         "websocket_clients": len(connected_clients),
+        "state_clients": len(state_clients),
     }
 
 
@@ -130,6 +144,8 @@ async def _banner() -> None:
         f"│  Claude: {'✓' if llm['claude'] else '✗'}  model={query_mod.CLAUDE_MODEL}",
         f"│  K2:     {'✓' if llm['k2'] else '✗'}  endpoint={query_mod.K2_ENDPOINT if llm['k2'] else '(unset)'}",
         f"│  Primary LLM: {llm['primary']}",
+        f"│  Twilio: {'✓ (sends real SMS)' if s['sms']['twilio'] else '✗ (drafts only)'}",
+        f"│  ElevenLabs: {'✓ (speaks answers + alerts)' if s['tts']['elevenlabs'] else '✗ (silent ambient display)'}",
         demo_mode_str,
         "│  Docs: http://localhost:8000/docs",
         "└───────────────────────────────────────────────────────",
@@ -205,16 +221,46 @@ async def post_query(body: QueryIn) -> dict[str, Any]:
         event_ids=event_ids,
     )
 
+    # Generate ElevenLabs MP3 of the answer for the ambient display. None
+    # when TTS is unconfigured or the call failed — answer still delivers
+    # text-only in that case. Also attach audio_url to the HTTP response
+    # so clients that want to play it (the main dashboard's <audio>) can
+    # without re-hitting the WS channel.
+    audio_url = tts_mod.speak(answer) if answer else None
+    if audio_url:
+        result["audio_url"] = audio_url
+
     # Ambient state: push the answer to /ws/state subscribers. The display
     # layer decides how long to show it and auto-returns to idle.
-    await broadcast_state("answer", text=answer)
+    await broadcast_state("answer", text=answer, audio_url=audio_url)
 
     return result
 
 
 @app.post("/agent/check")
-def post_agent_check() -> list[dict[str, Any]]:
-    return agent_mod.run()
+async def post_agent_check() -> list[dict[str, Any]]:
+    alerts = agent_mod.run()
+
+    # Ambient broadcast: if anything fired, push the highest-severity alert
+    # to /ws/state so the phone-stand / SenseCAP lights up red. Silent when
+    # no alerts — the display stays idle. Severity priority urgent > warn.
+    if alerts:
+        priority = {"urgent": 2, "warn": 1}
+        top = max(alerts, key=lambda a: priority.get(a.get("severity", ""), 0))
+        text = f"{top.get('title', 'Alert')} — {top.get('body', '')}".strip(" —")
+        # Prefer the warmer Claude-drafted SMS body for the spoken alert
+        # when available — "Hi Sarah, just a heads-up…" reads much better
+        # aloud than the clinical "Missed: Morning medication" template.
+        sa = top.get("suggested_action") or {}
+        spoken_text = sa.get("draft") or text
+        audio_url = tts_mod.speak(spoken_text)
+        await broadcast_state("alert", text=text, audio_url=audio_url)
+        _LOG.warning("/agent/check served %d alert(s), broadcast top: %s",
+                     len(alerts), top.get("title"))
+    else:
+        _LOG.info("/agent/check clean — no alerts")
+
+    return alerts
 
 
 @app.websocket("/ws/events")
@@ -264,14 +310,17 @@ async def internal_event_added(body: EventIn) -> dict[str, str]:
 
 # ---------- Ambient state broadcast -----------------------------------------
 
-async def broadcast_state(state: str, text: str | None = None) -> None:
+async def broadcast_state(state: str, text: str | None = None, audio_url: str | None = None) -> None:
     """Push an ambient-display state change to all /ws/state subscribers.
-    Payload: {"state": "idle|listening|thinking|answer", "text"?: str}.
+    Payload: {"state": "idle|listening|thinking|answer|alert",
+              "text"?: str, "audio_url"?: "/audio/....mp3"}.
     Fail-silent on per-client errors; a dead socket shouldn't cascade.
     """
     msg: dict[str, Any] = {"state": state}
     if text is not None:
         msg["text"] = text
+    if audio_url is not None:
+        msg["audio_url"] = audio_url
     payload = json.dumps(msg)
     dead: list[WebSocket] = []
     for client in state_clients:
@@ -293,8 +342,14 @@ async def internal_state(body: StateIn) -> dict[str, str]:
     """Localhost-only. Grove button handler, capture.py, or any Pi-side
     trigger hits this to push an ambient-display state. Accepts any state
     string — the clients render what they understand and ignore the rest.
+
+    For states that carry user-facing text (answer, alert), generate an
+    ElevenLabs MP3 so the display speaks in a warm voice. Transient states
+    (listening, thinking, idle) are silent — no text, no audio.
     """
-    await broadcast_state(body.state, body.text)
-    _LOG.info("/internal/state -> %s%s", body.state,
-              (" text=%r" % body.text) if body.text else "")
+    audio_url = tts_mod.speak(body.text) if body.text and body.state in ("answer", "alert") else None
+    await broadcast_state(body.state, body.text, audio_url)
+    _LOG.info("/internal/state -> %s%s%s", body.state,
+              (" text=%r" % body.text) if body.text else "",
+              (" audio=%s" % audio_url) if audio_url else "")
     return {"status": "ok"}

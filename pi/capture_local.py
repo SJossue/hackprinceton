@@ -37,11 +37,6 @@ HERO_OBJECTS = {
     "person": 0.50,
 }
 
-LABEL_REMAP = {
-    "remote": "keys",
-    "book": "notebook",
-}
-
 SURFACES = {
     "dining table": ("the desk",  0.2),
     "chair":        ("the chair", 0.2),
@@ -333,9 +328,14 @@ def main() -> None:
                     conf = float(box.conf[0])
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                     if label in HERO_OBJECTS and conf >= HERO_OBJECTS[label]:
-                        display_label = LABEL_REMAP.get(label, label)
+                        # Emit the raw COCO label — per CONTRACTS.md §1, label
+                        # translation (remote→keys, bottle→pill bottle, etc.)
+                        # happens at the query-context assembly seam in
+                        # backend/query.py:DISPLAY_LABELS, NOT at ingestion.
+                        # Keeps capture.py + capture_local.py vocabulary stable
+                        # and lets the query layer control user-facing text.
                         detections.append(
-                            TrackedDetection(tid, display_label, conf, (x1, y1, x2, y2))
+                            TrackedDetection(tid, label, conf, (x1, y1, x2, y2))
                         )
                     if label in SURFACES:
                         pretty, floor = SURFACES[label]

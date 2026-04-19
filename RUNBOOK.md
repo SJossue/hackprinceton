@@ -2,11 +2,16 @@
 
 Terse commands for hackathon-day operation. Not a tutorial; for 3 AM muscle memory.
 
+**Two modes coexist** — pick one at boot time, don't mix:
+
+- **Mode A — Pi-integrated** — everything runs on the Pi. Simplest; YOLO is CPU-bound on Pi 4 (~2 fps max).
+- **Mode B — Laptop-offload** (recommended for demo) — Pi runs `stream_server.py` only, a laptop runs `capture_local.py` + backend + serves frontend. YOLO hits 20+ fps on laptop GPU. Ethernet between Pi and laptop keeps the MJPEG stream off any cellular hotspot.
+
 Everything below assumes:
-- Pi IPv4 on iPhone hotspot: **`172.20.10.7`** as of last flash. **iPhone DHCP is non-sticky** — a re-flash or hotspot restart will likely move the Pi to a different host on the `172.20.10.0/28` block. Always confirm with `ping rewindpi.local` from **PowerShell** (WSL can't resolve mDNS). If the IP changed, update `frontend/.env.local` and this file.
-- User `pi` on Pi; backend root `~/rewind-backend/`; CV root `~/rewind-pi/`
-- Shared SQLite via symlink: `~/rewind-backend/rewind.db → ~/rewind-pi/rewind.db` (likewise `thumbs/`)
-- Pre-set SSH_ASKPASS trick assumed (WSL can't interactively prompt); or just `ssh pi@172.20.10.7` and type the password.
+- **Pi network:** either iPhone hotspot IP (e.g. `172.20.10.7`) or Windows ICS'd ethernet subnet (typically `192.168.137.x`). Always confirm with `ping rewindpi.local` from **PowerShell** (WSL can't resolve mDNS). If the IP moved, update `frontend/.env.local` + this file.
+- **User `pi` on Pi**; Mode A paths: `~/rewind-backend/`, `~/rewind-pi/`. Mode B on Pi only needs `~/rewind-pi/` with `stream_server.py`.
+- **Mode A DB sharing:** symlink `~/rewind-backend/rewind.db → ~/rewind-pi/rewind.db` (likewise `thumbs/`). Mode B: DB + thumbs live on the laptop, no symlink needed.
+- **Pre-set SSH_ASKPASS trick** assumed (WSL can't interactively prompt); or just `ssh pi@<ip>` and type the password.
 
 ## 1 — Deploy changes
 
@@ -43,11 +48,34 @@ cd ~/rewind-pi && source .venv/bin/activate && python capture.py
 
 ```bash
 cd frontend
-# .env.local must point at the Pi over hotspot
-echo "NEXT_PUBLIC_REWIND_API=http://172.20.10.7:8000" > .env.local
-npm install   # only first time
-npm run dev   # http://localhost:3000 in Windows browser
+# .env.local points at whichever laptop runs backend:
+#   Mode A: Pi's IP        NEXT_PUBLIC_REWIND_API=http://<pi-ip>:8000
+#   Mode B: laptop's IP    NEXT_PUBLIC_REWIND_API=http://<hub-ip>:8000
+# If phone/iPad on same LAN, use the laptop's LAN IP (not localhost).
+echo "NEXT_PUBLIC_REWIND_API=http://<hub-ip>:8000" > frontend/.env.local
+cd frontend && npm install   # only first time
+npm run dev -- --hostname 0.0.0.0  # bind all interfaces so iPhone can reach
+# Phone-stand browser: http://<laptop-lan-ip>:3000/status
 ```
+
+### Mode B — start the whole stack
+
+```bash
+# On Pi (single SSH session, foreground):
+ssh pi@<pi-ip>
+cd ~/rewind-pi && source .venv/bin/activate && python stream_server.py
+#  → MJPEG on port 9090. Ctrl-C to stop.
+
+# On hub laptop (compute hub, can be Jossue's G14 or Sunghoo's Mac):
+cd backend && source .venv/bin/activate
+REWIND_DEMO_MODE=1 python -m uvicorn server:app --host 0.0.0.0 --port 8000
+# In a second terminal, same laptop:
+cd pi && source ../backend/.venv/bin/activate  # or any env with cv2+ultralytics
+python capture_local.py --pi-ip <pi-ip>
+# optional: --show to render live bounding-box preview
+```
+
+Boot order: Pi stream first, THEN capture_local. capture_local fails fast if the stream isn't reachable.
 
 ### Secrets
 

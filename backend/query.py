@@ -178,6 +178,7 @@ def _mock_events() -> list[EventRow]:
 DISPLAY_LABELS: dict[str, str] = {
     "bottle":    "pill bottle",
     "remote":    "keys",
+    "book":      "notebook",
 }
 
 
