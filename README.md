@@ -245,8 +245,8 @@ The phone's `/status` page subscribes and morphs its particle cloud on each stat
 | Role | Owner |
 |---|---|
 | Team lead · backend · LLM pipeline · agent · Devpost | Jossue |
-| Raspberry Pi / CV pipeline | Sunghoo |
-| Frontend dashboard + ambient display | Jeeyan |
-| Hardware + tiger enclosure | Ariji |
+| Raspberry Pi / CV pipeline | Jossue & Sunghoo |
+| Frontend dashboard + ambient display | Jossue & Ariji |
+| Hardware + tiger enclosure | Jossue & Jeeyan |
 
 Built at HackPrinceton 2026.
