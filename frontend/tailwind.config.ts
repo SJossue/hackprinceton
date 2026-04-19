@@ -8,8 +8,58 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
+        sans:    ["Syne", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono:    ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        display: ["Syne", "sans-serif"],
+      },
+      colors: {
+        emerald: {
+          DEFAULT: "#10b981",
+          400: "#34d399",
+          500: "#10b981",
+          600: "#059669",
+          900: "#064e3b",
+          950: "#022c22",
+        },
+      },
+      animation: {
+        "fade-in":   "fadeIn 0.4s ease forwards",
+        "slide-up":  "slideUp 0.35s cubic-bezier(0.16,1,0.3,1) forwards",
+        "blink":     "blink 1.2s ease-in-out infinite",
+        "ping-slow": "pingSlow 2s ease-out infinite",
+        "orb1":      "orbFloat1 28s ease-in-out infinite",
+        "orb2":      "orbFloat2 35s ease-in-out infinite",
+        "orb3":      "orbFloat3 22s ease-in-out infinite",
+      },
+      keyframes: {
+        fadeIn:  { from: { opacity: "0" }, to: { opacity: "1" } },
+        slideUp: {
+          from: { opacity: "0", transform: "translateY(12px)" },
+          to:   { opacity: "1", transform: "translateY(0)" },
+        },
+        blink: {
+          "0%, 100%": { opacity: "1" },
+          "50%":      { opacity: "0.3" },
+        },
+        pingSlow: {
+          "0%":        { transform: "scale(1)",   opacity: "0.8" },
+          "70%, 100%": { transform: "scale(2.2)", opacity: "0" },
+        },
+        orbFloat1: {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "25%":      { transform: "translate(70px, 40px) scale(1.07)" },
+          "50%":      { transform: "translate(25px, 80px) scale(0.95)" },
+          "75%":      { transform: "translate(-35px, 20px) scale(1.04)" },
+        },
+        orbFloat2: {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "33%":      { transform: "translate(-55px, -35px) scale(1.09)" },
+          "66%":      { transform: "translate(35px, -55px) scale(0.93)" },
+        },
+        orbFloat3: {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "50%":      { transform: "translate(45px, -28px) scale(1.13)" },
+        },
       },
     },
   },

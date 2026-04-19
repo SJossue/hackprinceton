@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.py$|\\\\.md$|requirements\")",
+      "Bash(git ls-tree *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp"
+    ]
+  }
+}
