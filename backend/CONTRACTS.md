@@ -6,26 +6,53 @@
 
 ---
 
-## 0. The three wires at a glance
+## 0. The wires at a glance
+
+There are **two deployment modes** the same contract supports. The `/internal/*` localhost gate means capture + backend must run on the *same machine*, but which machine runs them is flexible.
+
+### Mode A — Pi-integrated (original)
 
 ```
 ┌────────────┐  POST /internal/event_added   ┌──────────────────┐
 │ pi/        │ ────────────────────────────▶ │ backend/         │
-│ capture.py │  (localhost only, §1)         │ FastAPI server   │
+│ capture.py │  (127.0.0.1, localhost only)  │ FastAPI (on Pi)  │
 └────────────┘                                │                  │
                                               │                  │  GET /events       ┌─────────────┐
                                               │                  │ ─────────────────▶ │ frontend/   │
                                               │                  │  WS /ws/events     │ Next.js     │
-                                              │                  │  POST /query       │ dashboard   │
+                                              │                  │  WS /ws/state      │ dashboard   │
+                                              │                  │  POST /query       │             │
                                               │                  │  POST /agent/check │             │
                                               └──────────────────┘ ◀──────────────── └─────────────┘
 ```
 
-Ports: backend runs on `:8000`. Pi and backend share `127.0.0.1`. Laptop hits `http://<pi-ip>:8000`.
+### Mode B — Laptop-offload (Pi as sensor)
+
+```
+┌───────────────────┐   MJPEG :9090   ┌──────────────────────────────────────┐
+│ pi/               │ ───(LAN only)──▶ │ laptop (compute hub)                 │
+│ stream_server.py  │                  │                                      │
+└───────────────────┘                  │  capture_local.py ──POST /internal── │
+                                       │                       event_added ─▶ │  backend/
+                                       │                     (127.0.0.1)      │  FastAPI (on laptop)
+                                       │                                      │
+                                       │                     GET /events      │ ─────────▶ frontend
+                                       │                     WS /ws/events    │
+                                       │                     WS /ws/state     │
+                                       │                     POST /query      │
+                                       │                     POST /agent/check│
+                                       └──────────────────────────────────────┘
+```
+
+Pi ↔ laptop link is **ethernet preferred** (free LAN bandwidth; MJPEG stream at ~5 Mbps over cellular hotspot eats data fast). WiFi works too if venue / home network is reliable. `capture_local.py` and the backend run on the same laptop so the localhost gate still holds.
+
+**Ports:** backend on `:8000` (both modes). MJPEG stream on `:9090` (Mode B only). Laptop hits `http://<hub-ip>:8000` — `<hub-ip>` is the Pi's IP in Mode A, the laptop's own LAN IP in Mode B.
 
 ---
 
-## 1. Event ingestion — `capture.py` → backend
+## 1. Event ingestion — capture → backend
+
+**Source:** either `pi/capture.py` (Mode A) or `pi/capture_local.py` on the laptop (Mode B). Both POST the same payload to the same endpoint; the only difference is where YOLO runs.
 
 **Endpoint:** `POST http://127.0.0.1:8000/internal/event_added`
 **Access control:** **localhost only.** Requests from a non-`127.0.0.1` client address get `403 Forbidden`. Enforced by FastAPI middleware. If you see a 403, you're hitting from the wrong host — the backend and `capture.py` must both run on the Pi.
