@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
 
@@ -72,7 +72,13 @@ def capture_loop() -> None:
 def main() -> None:
     threading.Thread(target=capture_loop, daemon=True).start()
     print(f"[stream] serving MJPEG on http://0.0.0.0:{STREAM_PORT}")
-    server = HTTPServer(("0.0.0.0", STREAM_PORT), MJPEGHandler)
+    # ThreadingHTTPServer so multiple clients (laptop capture + Chrome debug +
+    # phone display, etc.) can all watch the stream concurrently. Plain
+    # HTTPServer is single-threaded and silently starves new clients while one
+    # is connected — that caused capture_local.py to hang on 'cannot open
+    # stream' whenever another browser tab was already watching.
+    server = ThreadingHTTPServer(("0.0.0.0", STREAM_PORT), MJPEGHandler)
+    server.daemon_threads = True
     try:
         server.serve_forever()
     except KeyboardInterrupt:
