@@ -1,0 +1,17 @@
+# Laptop-side deps for Mode B (split pipeline).
+# On the laptop, capture_local.py pulls the MJPEG stream from the Pi, runs
+# YOLO + ByteTrack, writes events to rewind.db, and broadcasts to the backend.
+# Install on the laptop:
+#   cd pi && python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements-laptop.txt
+
+# Frame capture + processing
+opencv-python>=4.9
+numpy>=1.26
+
+# Detection + tracking (YOLO + built-in ByteTrack). Pulls torch + CUDA — large.
+# Do NOT install these on the Pi itself; the Pi runs stream_server.py only.
+ultralytics>=8.1.0
+
+# Broadcast events to the backend
+httpx>=0.27

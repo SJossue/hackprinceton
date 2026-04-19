@@ -1,15 +1,14 @@
-# Pi-side CV pipeline deps (Sunghoo)
+# Pi-side deps for Mode B (split pipeline).
+# On the Pi, only stream_server.py runs — a dumb MJPEG source, no ML.
 # Install on the Pi:
 #   python -m venv .venv && source .venv/bin/activate
 #   pip install -r requirements.txt
-# On Pi OS Bookworm you may need --break-system-packages if not using a venv.
+#
+# The laptop runs capture_local.py (YOLO + ByteTrack + DB + broadcast) from the
+# same directory — see requirements-laptop.txt for that environment.
 
-# Frame capture + processing
-opencv-python>=4.9
+# Frame capture + JPEG encode. On Raspberry Pi OS Lite (no desktop),
+# opencv-python wants libGL.so.1 which isn't installed — use the headless
+# variant instead. Same OpenCV, no GUI deps.
+opencv-python-headless>=4.9
 numpy>=1.26
-
-# Detection + tracking (YOLOv8-nano + built-in ByteTrack)
-ultralytics>=8.1.0
-
-# Broadcast events back to the FastAPI server
-httpx>=0.27

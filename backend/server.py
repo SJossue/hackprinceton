@@ -96,6 +96,10 @@ class EventIn(BaseModel):
     # when the event doesn't involve a surface (person events, first-run
     # captures before the SURFACES dict was populated, etc.).
     location: str | None = None
+    # Room-level grounding — the physical room the camera is watching
+    # ("Living Room", "Kitchen", etc.). Supplied per-capture-instance via
+    # `capture_local.py --room`. None on pre-room captures.
+    room: str | None = None
 
 
 def _db_event_count() -> int:
@@ -169,11 +173,12 @@ def get_events(limit: int = 80) -> list[dict[str, Any]]:
         return []
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    # Guard: older capture.py schemas pre-date the `location` column.
+    # Guard: older capture.py schemas pre-date the `location` and `room` columns.
     cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
-    loc_col = "location" if "location" in cols else "NULL AS location"
+    loc_col  = "location" if "location" in cols else "NULL AS location"
+    room_col = "room"     if "room"     in cols else "NULL AS room"
     rows = conn.execute(
-        f"SELECT id, ts, event_type, object, track_id, thumb_path, {loc_col} "
+        f"SELECT id, ts, event_type, object, track_id, thumb_path, {loc_col}, {room_col} "
         f"FROM events ORDER BY ts DESC LIMIT ?",
         (limit,),
     ).fetchall()

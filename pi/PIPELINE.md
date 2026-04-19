@@ -104,7 +104,7 @@ In another terminal on the laptop, from the `pi/` directory:
 ```bash
 cd pi
 python -m venv .venv && source .venv/bin/activate    # first time only
-pip install -r requirements.txt                       # first time only
+pip install -r requirements-laptop.txt                # first time only — full YOLO stack
 python capture_local.py --pi-ip <pi-ip>               # e.g. 172.20.10.3
 ```
 

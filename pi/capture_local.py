@@ -63,6 +63,11 @@ class Event:
     bbox: tuple[int, int, int, int] | None
     thumb_path: str | None
     location: str | None = None
+    # Room-level tag — supplied per-capture-instance via `--room`. A camera
+    # watches exactly one room, so every event it emits gets the same tag.
+    # Separate from `location` (sub-room surface: "the desk"), because rooms
+    # are cross-camera and surfaces are per-camera.
+    room: str | None = None
 
 @dataclass
 class SurfaceDetection:
@@ -83,21 +88,24 @@ def init_db() -> sqlite3.Connection:
         track_id INTEGER,
         bbox TEXT,
         thumb_path TEXT,
-        location TEXT
+        location TEXT,
+        room TEXT
       )
     """)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
     if "location" not in cols:
         conn.execute("ALTER TABLE events ADD COLUMN location TEXT")
+    if "room" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN room TEXT")
     conn.commit()
     return conn
 
 def insert_event(conn: sqlite3.Connection, ev: Event) -> int:
     cur = conn.execute(
-        "INSERT INTO events (ts, event_type, object, track_id, bbox, thumb_path, location) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (ts, event_type, object, track_id, bbox, thumb_path, location, room) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (ev.ts, ev.event_type, ev.object, ev.track_id,
-         str(ev.bbox) if ev.bbox else None, ev.thumb_path, ev.location),
+         str(ev.bbox) if ev.bbox else None, ev.thumb_path, ev.location, ev.room),
     )
     conn.commit()
     return cur.lastrowid
@@ -268,6 +276,7 @@ def broadcast_event(event_id: int, ev: Event) -> None:
                 "track_id": ev.track_id,
                 "thumb_path": ev.thumb_path,
                 "location": ev.location,
+                "room": ev.room,
             },
             timeout=0.5,
         )
@@ -282,6 +291,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=9090, help="Pi stream port")
     parser.add_argument("--model", default="yolov8n.pt", help="YOLO model path")
     parser.add_argument("--show", action="store_true", help="Show live CV window")
+    parser.add_argument("--room", default="Living Room",
+                        help="Room label this camera is watching (e.g. 'Living Room', 'Kitchen'). "
+                             "Every emitted event is tagged with this string — pick it per-camera.")
     args = parser.parse_args()
 
     stream_url = f"http://{args.pi_ip}:{args.port}"
@@ -362,13 +374,15 @@ def main() -> None:
                     break
 
             for ev in extractor.step(detections, surfaces):
+                ev.room = args.room
                 if ev.event_type != "person_left":
                     ev.thumb_path = save_thumb(frame, ev.ts)
                 event_id = insert_event(conn, ev)
                 tstr = datetime.fromtimestamp(ev.ts).strftime("%H:%M:%S")
                 loc = f" @ {ev.location}" if ev.location else ""
+                room = f" [{ev.room}]" if ev.room else ""
                 print(f"[event {event_id}] {tstr} {ev.event_type:20s} "
-                      f"{ev.object:20s} track={ev.track_id}{loc}")
+                      f"{ev.object:20s} track={ev.track_id}{loc}{room}")
                 broadcast_event(event_id, ev)
 
             dt = time.time() - t0

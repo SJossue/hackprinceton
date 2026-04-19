@@ -1,203 +1,252 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap');
+/* Rewind — warm editorial theme.
+   Target audience: older adults + caregivers. Reads like a journal, not a dashboard.
+   Fraunces (display serif) + Manrope (body sans). Cream paper, ochre accent,
+   sage for medication, dusk for people, clay for alerts. */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..800&family=Manrope:wght@300..700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
+  color-scheme: light;
+
+  /* Paper: warm cream ramp (default). */
+  --bg:        #F5EEE1;
+  --surface-1: #FBF6EC;
+  --surface-2: #F0E6D2;
+  --surface-3: #E6D9BF;
+  --surface-4: #D9C9AB;
+
+  --border:        rgba(42,31,21,0.10);
+  --border-strong: rgba(42,31,21,0.18);
+  --border-em:     rgba(124,141,101,0.35);
+
+  /* Accents. Variable names are preserved from the old palette so inline
+     styles rebind automatically — but their values are now warm. */
+  --emerald:      #7C8D65;   /* sage — medication / wellness */
+  --emerald-hi:   #9BAD82;
+  --emerald-glow: rgba(124,141,101,0.22);
+
+  --indigo:   #9A6F5E;       /* dusk — person events (muted warmth) */
+  --cyan:     #A98670;       /* dusk-hi — person-detection variants */
+  --amber:    #B8743F;       /* ochre — primary warmth */
+  --red:      #C66548;       /* clay — alerts (warmer than pure red) */
+
+  --ink:      #2A1F15;       /* deep espresso — primary text */
+  --ink-soft: #5A4A3B;
+  --ink-mute: #8A7862;
+
+  /* Back-compat names used throughout inline styles. */
+  --text-primary:   var(--ink);
+  --text-secondary: var(--ink-soft);
+  --text-muted:     var(--ink-mute);
+}
+
+/* Night mode — warm candlelit dark, not cold terminal dark. */
+[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg:        #07070f;
-  --surface-1: #0d0d1a;
-  --surface-2: #141424;
-  --surface-3: #1c1c2e;
-  --surface-4: #242438;
+  --bg:        #1C1610;
+  --surface-1: #261E16;
+  --surface-2: #2F261B;
+  --surface-3: #3A2E20;
+  --surface-4: #483929;
 
-  --border:        rgba(255,255,255,0.07);
-  --border-em:     rgba(16,185,129,0.32);
-  --border-strong: rgba(255,255,255,0.13);
+  --border:        rgba(240,228,209,0.09);
+  --border-strong: rgba(240,228,209,0.17);
+  --border-em:     rgba(155,173,130,0.40);
 
-  --emerald:      #10b981;
-  --emerald-hi:   #34d399;
-  --emerald-glow: rgba(16,185,129,0.25);
+  --emerald:      #9BAD82;
+  --emerald-hi:   #B5C89A;
+  --emerald-glow: rgba(155,173,130,0.25);
 
-  --indigo:   #818cf8;
-  --cyan:     #22d3ee;
-  --amber:    #fbbf24;
-  --red:      #f87171;
+  --indigo:   #B48B78;
+  --cyan:     #C89F86;
+  --amber:    #D18F5A;
+  --red:      #E08468;
 
-  --text-primary:   #eeeef8;
-  --text-secondary: #7878a0;
-  --text-muted:     #3a3a58;
+  --ink:      #F0E4D1;
+  --ink-soft: #C2B4A0;
+  --ink-mute: #8C7E6D;
+
+  --text-primary:   var(--ink);
+  --text-secondary: var(--ink-soft);
+  --text-muted:     var(--ink-mute);
 }
 
 html, body { height: 100%; background: var(--bg); }
 * { box-sizing: border-box; }
 
-::-webkit-scrollbar         { width: 3px; height: 3px; }
+/* Warm paper grain. Subtle — present, never loud. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    radial-gradient(circle at 22% 18%, rgba(184,116,63,0.06), transparent 55%),
+    radial-gradient(circle at 78% 82%, rgba(124,141,101,0.05), transparent 55%),
+    radial-gradient(circle at 55% 45%, rgba(154,111,94,0.04), transparent 60%);
+  mix-blend-mode: multiply;
+}
+[data-theme="dark"] body::before { mix-blend-mode: screen; opacity: 0.8; }
+
+::-webkit-scrollbar         { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track   { background: transparent; }
 ::-webkit-scrollbar-thumb   { background: var(--surface-3); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--surface-4); }
 
 @layer base {
+  html { font-size: 17px; }  /* bump base — 17px body floor for readability */
   body {
-    font-family: 'Syne', ui-sans-serif, sans-serif;
+    font-family: 'Manrope', ui-sans-serif, sans-serif;
     background: var(--bg);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+    font-variation-settings: "opsz" 72, "SOFT" 50;
+    letter-spacing: -0.015em;
+    line-height: 1.1;
+    color: var(--ink);
   }
 }
 
 @layer utilities {
-  .font-display { font-family: 'Syne', sans-serif; }
-  .font-mono    { font-family: 'JetBrains Mono', monospace; }
+  .font-display { font-family: 'Fraunces', 'Iowan Old Style', Georgia, serif; font-variation-settings: "opsz" 72, "SOFT" 50; }
+  .font-serif   { font-family: 'Fraunces', Georgia, serif; }
+  .font-body    { font-family: 'Manrope', sans-serif; }
+  .font-mono    { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 
-  /* Cards */
+  /* Cards — paper with a breath of shadow, not neon border. */
   .card {
     background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 18px;
+    border-radius: 22px;
+    box-shadow:
+      0 1px 0 rgba(42,31,21,0.04) inset,
+      0 14px 40px -24px rgba(42,31,21,0.22);
+  }
+  [data-theme="dark"] .card {
+    box-shadow:
+      0 1px 0 rgba(240,228,209,0.04) inset,
+      0 14px 40px -24px rgba(0,0,0,0.55);
   }
   .card-em {
-    background: rgba(16,185,129,0.04);
+    background: linear-gradient(180deg, var(--surface-1), color-mix(in oklab, var(--surface-1) 80%, var(--emerald)));
     border: 1px solid var(--border-em);
-    border-radius: 18px;
+    border-radius: 22px;
   }
   .card-urgent {
-    background: rgba(239,68,68,0.05);
-    border: 1px solid rgba(239,68,68,0.22);
-    border-radius: 16px;
+    background: color-mix(in oklab, var(--surface-1) 82%, var(--red));
+    border: 1px solid color-mix(in oklab, var(--red) 45%, transparent);
+    border-radius: 18px;
   }
   .card-warn {
-    background: rgba(245,158,11,0.05);
-    border: 1px solid rgba(245,158,11,0.22);
-    border-radius: 16px;
+    background: color-mix(in oklab, var(--surface-1) 85%, var(--amber));
+    border: 1px solid color-mix(in oklab, var(--amber) 35%, transparent);
+    border-radius: 18px;
   }
 
-  /* Section label — replaces tiny .tag */
   .section-label {
-    font-family: 'Syne', sans-serif;
-    font-size: 0.75rem;
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.78rem;
     font-weight: 600;
-    letter-spacing: 0.03em;
-    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    color: var(--ink-soft);
   }
 
-  /* Data label (mono, smaller) */
   .data-label {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
+    font-size: 0.66rem;
     font-weight: 500;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--ink-mute);
   }
 
-  /* Event type badge */
   .event-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    padding: 2px 7px;
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    padding: 3px 10px;
     border-radius: 999px;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     white-space: nowrap;
+    text-transform: lowercase;
   }
 
-  /* Animations */
-  .animate-fade-in  { animation: fadeIn  0.5s ease forwards; }
-  .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16,1,0.3,1) forwards; }
-  .animate-blink    { animation: blink   1s ease-in-out infinite; }
-  .animate-pulse-em { animation: pulseEm 2s ease-in-out infinite; }
-  .animate-cursor   { animation: cursorBlink 0.9s step-end infinite; }
+  /* Ornamental rule — for editorial section breaks. */
+  .ornament::before, .ornament::after {
+    content: ""; display: inline-block;
+    width: 24px; height: 1px;
+    background: var(--ink-mute); opacity: 0.45;
+    vertical-align: middle; margin: 0 12px;
+  }
+
+  .animate-fade-in  { animation: fadeIn  0.7s cubic-bezier(0.16,1,0.3,1) forwards; }
+  .animate-slide-up { animation: slideUp 0.55s cubic-bezier(0.16,1,0.3,1) forwards; }
+  .animate-blink    { animation: blink   1.1s ease-in-out infinite; }
+  .animate-pulse-em { animation: pulseEm 2.4s ease-in-out infinite; }
+  .animate-cursor   { animation: cursorBlink 0.95s step-end infinite; }
   .animate-count-up { animation: countUp 0.55s cubic-bezier(0.16,1,0.3,1) forwards; }
+  .animate-rise     { animation: riseIn 0.9s cubic-bezier(0.16,1,0.3,1) both; }
 }
 
 @keyframes fadeIn  { from { opacity:0 } to { opacity:1 } }
 @keyframes slideUp {
-  from { opacity:0; transform:translateY(20px) }
+  from { opacity:0; transform:translateY(18px) }
+  to   { opacity:1; transform:translateY(0) }
+}
+@keyframes riseIn {
+  from { opacity:0; transform:translateY(14px) }
   to   { opacity:1; transform:translateY(0) }
 }
 @keyframes blink {
   0%,100% { opacity:1 }
-  50%     { opacity:0.2 }
+  50%     { opacity:0.35 }
 }
 @keyframes pulseEm {
-  0%,100% { box-shadow:0 0 0 0 rgba(16,185,129,0.35) }
-  50%     { box-shadow:0 0 0 10px rgba(16,185,129,0) }
+  0%,100% { box-shadow:0 0 0 0 rgba(124,141,101,0.32) }
+  50%     { box-shadow:0 0 0 12px rgba(124,141,101,0) }
 }
 @keyframes cursorBlink {
   0%,100% { opacity:1 }
   50%     { opacity:0 }
 }
 @keyframes countUp {
-  from { opacity:0; transform:translateY(10px) scale(0.94) }
+  from { opacity:0; transform:translateY(8px) scale(0.96) }
   to   { opacity:1; transform:translateY(0) scale(1) }
 }
-@keyframes orbFloat1 {
-  0%,100% { transform:translate(0,0) scale(1) }
-  25%     { transform:translate(70px,40px) scale(1.07) }
-  50%     { transform:translate(25px,80px) scale(0.95) }
-  75%     { transform:translate(-35px,20px) scale(1.04) }
-}
-@keyframes orbFloat2 {
-  0%,100% { transform:translate(0,0) scale(1) }
-  33%     { transform:translate(-55px,-35px) scale(1.09) }
-  66%     { transform:translate(35px,-55px) scale(0.93) }
-}
-@keyframes orbFloat3 {
-  0%,100% { transform:translate(0,0) scale(1) }
-  50%     { transform:translate(45px,-28px) scale(1.13) }
-}
 @keyframes eventIn {
-  from { opacity:0; transform:translateX(-8px) }
+  from { opacity:0; transform:translateX(-6px) }
   to   { opacity:1; transform:translateX(0) }
 }
-@keyframes scanLine {
-  0%   { transform:translateX(-100%) }
-  100% { transform:translateX(300%) }
-}
 @keyframes pingSlow {
-  0%       { transform:scale(1); opacity:0.8 }
-  70%,100% { transform:scale(2.4); opacity:0 }
+  0%       { transform:scale(1); opacity:0.75 }
+  70%,100% { transform:scale(2.6); opacity:0 }
 }
 
-/* ── Light mode ────────────────────────────────────────────────────────────── */
-[data-theme="light"] {
-  --bg:        #f0f0f8;
-  --surface-1: #ffffff;
-  --surface-2: #e8e8f4;
-  --surface-3: #dcdcec;
-  --surface-4: #d0d0e4;
+/* Legacy keyframes kept so existing inline animations still run. */
+@keyframes orbFloat1 { 0%,100% { transform:translate(0,0) } 50% { transform:translate(30px,20px) } }
+@keyframes orbFloat2 { 0%,100% { transform:translate(0,0) } 50% { transform:translate(-20px,-15px) } }
+@keyframes orbFloat3 { 0%,100% { transform:translate(0,0) } 50% { transform:translate(15px,-10px) } }
+@keyframes scanLine  { 0% { transform:translateX(-100%) } 100% { transform:translateX(300%) } }
 
-  --border:        rgba(0,0,0,0.09);
-  --border-em:     rgba(16,185,129,0.45);
-  --border-strong: rgba(0,0,0,0.16);
-
-  --emerald:      #059669;
-  --emerald-hi:   #10b981;
-  --emerald-glow: rgba(5,150,105,0.2);
-
-  --indigo:   #6366f1;
-  --cyan:     #0891b2;
-  --amber:    #d97706;
-  --red:      #dc2626;
-
-  --text-primary:   #0a0a1e;
-  --text-secondary: #4a4a70;
-  --text-muted:     #8888b0;
-}
-
-[data-theme="light"] body {
-  background: var(--bg);
-  color: var(--text-primary);
-}
-
-/* Smooth theme transition on key properties */
 *, *::before, *::after {
   transition-property: background-color, border-color, color, box-shadow;
-  transition-duration: 0.2s;
+  transition-duration: 0.22s;
   transition-timing-function: ease;
+}
+
+/* Focus ring — accessibility floor. */
+*:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+  border-radius: 6px;
 }

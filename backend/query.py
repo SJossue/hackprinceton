@@ -125,18 +125,22 @@ class EventRow:
     # Spatial grounding — e.g. "the desk". None when capture.py didn't
     # resolve a surface, or when reading from a pre-spatial rewind.db.
     location: str | None = None
+    # Room-level grounding — e.g. "Living Room". Supplied per-capture-instance.
+    # None on pre-room captures; the LLM handles absence gracefully.
+    room: str | None = None
 
 
 def load_recent_events(db_path: Path = DB_PATH, limit: int = RECENT_EVENTS_LIMIT) -> list[EventRow]:
     if not db_path.exists():
         return _mock_events()
     conn = sqlite3.connect(db_path)
-    # Pre-spatial rewind.db files don't have a `location` column yet; select
-    # NULL in that slot so the EventRow tuple shape is stable.
+    # Pre-spatial rewind.db files don't have `location` / `room` columns yet;
+    # select NULL in those slots so the EventRow tuple shape is stable.
     cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
-    loc_col = "location" if "location" in cols else "NULL"
+    loc_col  = "location" if "location" in cols else "NULL"
+    room_col = "room"     if "room"     in cols else "NULL"
     rows = conn.execute(
-        f"SELECT id, ts, event_type, object, {loc_col} FROM events "
+        f"SELECT id, ts, event_type, object, {loc_col}, {room_col} FROM events "
         f"ORDER BY ts DESC LIMIT ?",
         (limit,),
     ).fetchall()
@@ -166,14 +170,14 @@ def _mock_events() -> list[EventRow]:
     """
     now = datetime.now().timestamp()
     return [
-        EventRow(1, now - 9 * 3600,        "object_placed",    "bottle",       "the desk"),   # pill bottle on desk
-        EventRow(2, now - 9 * 3600 + 60,   "action_detected",  "taking_pills"),               # actually took them
-        EventRow(3, now - 6 * 3600,        "person_entered",   "person"),
-        EventRow(4, now - 6 * 3600 + 60,   "person_left",      "person"),
-        EventRow(5, now - 4 * 3600,        "object_picked_up", "remote",       "the desk"),   # keys from desk
-        EventRow(6, now - 2 * 3600,        "object_placed",    "book",         "the chair"),  # book on chair
-        EventRow(7, now - 180,             "object_placed",    "cell phone",   "the desk"),   # phone on desk
-        EventRow(8, now - 60,              "person_left",      "person"),
+        EventRow(1, now - 9 * 3600,        "object_placed",    "bottle",       "the desk",  "Kitchen"),      # pill bottle on kitchen counter
+        EventRow(2, now - 9 * 3600 + 60,   "action_detected",  "taking_pills", None,        "Kitchen"),
+        EventRow(3, now - 6 * 3600,        "person_entered",   "person",       None,        "Living Room"),
+        EventRow(4, now - 6 * 3600 + 60,   "person_left",      "person",       None,        "Living Room"),
+        EventRow(5, now - 4 * 3600,        "object_picked_up", "remote",       "the desk",  "Living Room"),  # keys from desk
+        EventRow(6, now - 2 * 3600,        "object_placed",    "book",         "the chair", "Bedroom"),      # book on chair
+        EventRow(7, now - 180,             "object_placed",    "cell phone",   "the desk",  "Living Room"),  # phone on desk
+        EventRow(8, now - 60,              "person_left",      "person",       None,        "Living Room"),
     ]
 
 
@@ -252,8 +256,9 @@ def format_log(events: list[EventRow]) -> str:
 
     Spatial grounding: when ``location`` is present (e.g. "the desk"),
     append "on the desk" to the line so the model can cite where an object
-    was placed or picked up. Location is only meaningful for object events
-    — never rendered on person/action events.
+    was placed or picked up. When ``room`` is present (e.g. "Living Room"),
+    append "in the Living Room" so answers can cite the room. Location is
+    only meaningful for object events; room applies to every event type.
     """
     lines = []
     now = datetime.now().timestamp()
@@ -262,7 +267,8 @@ def format_log(events: list[EventRow]) -> str:
         rel  = humanize_timestamp(e.ts, now)
         obj  = _display_label(e.object)
         loc  = f" on {e.location}" if e.location else ""
-        lines.append(f"[id={e.id}] [{tstr} · {rel}] {e.event_type}: {obj}{loc}")
+        room = f" in the {e.room}"  if e.room     else ""
+        lines.append(f"[id={e.id}] [{tstr} · {rel}] {e.event_type}: {obj}{loc}{room}")
     return "\n".join(lines)
 
 

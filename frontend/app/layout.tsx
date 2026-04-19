@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Rewind — Ambient memory for your space",
-  description: "Your home has a memory. Just ask.",
+  title: "Recall — your home, quietly remembered",
+  description: "Where did I leave my keys? Did I take my pills? Your home remembers. Just ask.",
 };
 
 export default function RootLayout({
