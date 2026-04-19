@@ -13,6 +13,7 @@ node_modules/
 .next/
 out/
 dist/
+*.tsbuildinfo
 
 # Data (Pi-side, never committed — privacy-by-design)
 rewind.db
