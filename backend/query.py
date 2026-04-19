@@ -70,9 +70,10 @@ def k2_configured() -> bool:
     return True
 
 CLAUDE_MODEL = "claude-opus-4-7"
-# Model ID per K2's API docs — includes the org prefix, must match exactly
-# or the endpoint 400s. Shows up in _model tags on answers as this string,
-# which is honest (it's what answered) even if long.
+# K2 Think V2 model slug per the MBZUAI API:
+#   POST https://api.k2think.ai/v1/chat/completions
+#   body.model = "MBZUAI-IFM/K2-Think-v2"
+# OpenAI-shaped request/response (choices[0].message.content carries the text).
 K2_MODEL = "MBZUAI-IFM/K2-Think-v2"
 
 SYSTEM_PROMPT = """You are the reasoning layer of Rewind, an on-device \
