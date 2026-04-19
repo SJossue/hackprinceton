@@ -76,12 +76,18 @@ CLAUDE_MODEL = "claude-opus-4-7"
 # OpenAI-shaped request/response (choices[0].message.content carries the text).
 K2_MODEL = "MBZUAI-IFM/K2-Think-v2"
 
-SYSTEM_PROMPT = """You are the reasoning layer of Rewind, an on-device \
-episodic-memory system for a physical space. You receive a structured event log \
-and a user query. Answer strictly from the log. Never invent events. Respond \
-in JSON only: {"answer": string, "confidence": "high"|"medium"|"low", "event_ids": [int]}. \
-Keep answers under 2 sentences, warm tone, include specific times. If the log \
-doesn't contain the answer, say: "I didn't see that happen.\""""
+SYSTEM_PROMPT = """You are the reasoning layer of Rewind, an on-device episodic-memory system for a physical space. You receive a structured event log and a user query.
+
+Answer from what the log shows. **Partial information is a valid answer** — when the log has events related to the question but doesn't fully resolve it, report what you saw AND what's uncertain. Examples:
+- "Where are my keys?" + log shows pickup but no placement → "You picked up your keys at 9:27 AM from the desk; I haven't seen where you set them down since."
+- "Did I take my pills this morning?" + log shows a taking_pills action → "Yes, you took your pills around 4:28 AM."
+- "What's on the desk right now?" + log shows object_placed events on the desk with no matching picked_up → list them by time.
+
+Only respond with exactly "I didn't see that happen." when the log contains **no events relevant to the question at all** (e.g., a question about a laptop when no laptop-related events exist).
+
+Never invent events. Include specific times. Keep the warm, roommate-ish tone. Answers must be under 2 sentences.
+
+Respond in JSON only: {"answer": string, "confidence": "high"|"medium"|"low", "event_ids": [int, ...]}. Populate event_ids with every event id you actually used to form the answer."""
 
 _SAFE_FALLBACK: dict[str, Any] = {
     "answer": "I didn't see that happen.",
@@ -93,7 +99,15 @@ _SAFE_FALLBACK: dict[str, Any] = {
 # See CONTRACTS.md §3c timeouts for the full budget discussion.
 # DEMO_MODE tightens Claude's timeout so the demo-moment latency cap holds
 # even if the network has a bad second.
-K2_TIMEOUT_S = 8.0
+# K2 Think V2 is a reasoning model — cold-start inference is noticeably slower
+# than Claude's. 12s accommodates first-call warmup; subsequent calls usually
+# land in 2–5s.
+K2_TIMEOUT_S = 12.0
+# K2 Think V2 is a reasoning model — it often emits chain-of-thought before
+# the final JSON answer. Give it enough budget for both; our _extract_json
+# finds the final JSON block regardless. 400 tokens truncated mid-reasoning
+# on some prompts in testing.
+K2_MAX_TOKENS = 800
 CLAUDE_TIMEOUT_S = 6.0 if REWIND_DEMO_MODE else 10.0
 
 
@@ -264,35 +278,109 @@ def _log(tag: str, msg: str, level: str = "info") -> None:
     fn("[%s] %s", tag, msg)
 
 
+def _iter_balanced_json_blocks(text: str):
+    """Yield every top-level ``{...}`` substring in ``text`` using brace balance.
+
+    Reasoning models like K2 Think V2 emit chain-of-thought *before* (and
+    sometimes *after*) the final JSON answer. A naive greedy regex
+    (``{.*}`` with DOTALL) can span across multiple unrelated JSON blocks
+    and produce an unparseable concatenation. This scanner walks the text
+    character-by-character, tracks string escapes, and yields each complete
+    brace-balanced block so callers can try them individually.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for i, c in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    yield text[start : i + 1]
+                    start = -1
+
+
 def _extract_json(text: str) -> dict:
-    """Pull a JSON object out of an LLM response, even if wrapped in prose or fences.
+    """Pull a JSON answer object out of an LLM response, even when the model
+    emits reasoning prose, markdown fences, or multiple JSON blocks.
 
     Strategy ladder:
-      1. Direct json.loads
-      2. Strip ```json / ``` fences and retry
-      3. Regex for the first balanced {...} block
-    Raises ValueError if no strategy works.
+      1. Direct ``json.loads`` — works when the model obeyed "JSON only."
+      2. Strip ```json / ``` fences, retry direct parse.
+      3. Brace-balanced scan: try every top-level ``{...}`` block in order.
+         Prefer the *last* one that has an ``"answer"`` field (reasoning
+         models often emit scratch JSON first, final answer last).
+      4. Fall back to greedy regex for pathological cases.
+
+    Raises ValueError if nothing parses.
     """
     s = text.strip()
+
+    # 1. Direct parse
     try:
-        return json.loads(s)
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
     except json.JSONDecodeError:
         pass
 
-    stripped = s.replace("```json", "").replace("```", "").strip()
+    # 2. Strip markdown fences and retry
+    fenced = re.sub(r"```(?:json)?\s*", "", s).replace("```", "").strip()
     try:
-        return json.loads(stripped)
+        obj = json.loads(fenced)
+        if isinstance(obj, dict):
+            return obj
     except json.JSONDecodeError:
         pass
 
-    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    # 3. Brace-balanced scan — find candidates, prefer those with "answer"
+    answer_shaped: list[dict] = []
+    other_dicts:   list[dict] = []
+    for block in _iter_balanced_json_blocks(fenced):
+        try:
+            obj = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if "answer" in obj:
+            answer_shaped.append(obj)
+        else:
+            other_dicts.append(obj)
+    if answer_shaped:
+        # Prefer the last answer-shaped block — reasoning models typically
+        # produce scratch JSON before the final answer.
+        return answer_shaped[-1]
+    if other_dicts:
+        return other_dicts[-1]
+
+    # 4. Greedy regex as last resort
+    match = re.search(r"\{.*\}", fenced, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(0))
+            obj = json.loads(match.group(0))
+            if isinstance(obj, dict):
+                return obj
         except json.JSONDecodeError:
             pass
 
-    raise ValueError(f"no JSON object found in response: {text[:200]!r}")
+    raise ValueError(f"no JSON object found in response: {text[:300]!r}")
 
 
 def _validate_answer(obj: dict) -> dict:
@@ -307,31 +395,109 @@ def _validate_answer(obj: dict) -> dict:
 
 
 def call_k2(log_text: str, question: str) -> dict | None:
-    """K2 Think V2 primary path. Returns None on any failure so the caller falls back."""
+    """K2 Think V2 primary path. Returns None on any failure so the caller falls back.
+
+    Hardened against common reasoning-model + OpenAI-compat-fork quirks
+    that other HackPrinceton teams reported fighting with:
+
+      - **No ``response_format``.** Many OpenAI-compatible forks (K2 included,
+        based on observed 400s) reject or misinterpret this OpenAI-specific
+        parameter. We enforce JSON output via the prompt instead.
+
+      - **System prompt inlined in the user turn.** Reasoning models handle
+        the `system` role inconsistently across forks — some ignore it, some
+        reject multi-message arrays. A single user turn with the instruction
+        up front and the "JSON only" reminder at the end is the most
+        portable shape.
+
+      - **max_tokens cap.** Prevents runaway chain-of-thought from truncating
+        the final JSON block we actually care about.
+
+      - **Non-200 body surfaced to log.** Instead of just "HTTP 400",
+        ``rewind.log`` gets the first 200 chars of the server's error
+        message, making it one-look diagnosable ("invalid model",
+        "rate limited", "auth"). Saves 20 minutes of flail.
+
+      - **Reasoning-model output tolerated.** ``_extract_json`` scans for
+        brace-balanced blocks and prefers the last one with an "answer"
+        field, so K2's habit of emitting scratch-work JSON before the final
+        answer no longer defeats extraction.
+
+      - **Timeout raised to ``K2_TIMEOUT_S = 12s``.** First-call cold-start
+        on K2 can take 8–10s; warm calls are 2–5s. Claude fallback still
+        catches anything beyond that.
+    """
     if not k2_configured():
         return None
+
+    # Prompt is one user turn. Instruction first, data in the middle,
+    # "JSON only" reminder last — last-line emphasis survives even if the
+    # model goes off on a reasoning tangent. The CRITICAL line at the end
+    # is deliberately shouty — K2 Think V2's default behavior is to emit
+    # "We need to parse the event log..." style reasoning; plain "JSON only"
+    # wasn't enough in testing.
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"Event log:\n{log_text}\n\n"
+        f"Query: {question}\n\n"
+        f"CRITICAL OUTPUT FORMAT: Your entire response must be a single JSON "
+        f"object, nothing else. Start with `{{` and end with `}}`. Do NOT write "
+        f"'We need to...', 'Let me think...', 'First I see...', or any other "
+        f"reasoning prose. Do NOT use markdown fences. Example of a valid "
+        f'response shape: {{"answer": "You placed your keys on the desk at '
+        f'9:27 AM.", "confidence": "high", "event_ids": [5]}}'
+    )
+
     try:
         r = httpx.post(
             K2_ENDPOINT,
             json={
-                "model": K2_MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Event log:\n{log_text}\n\nQuery: {question}"},
-                ],
-                "response_format": {"type": "json_object"},
+                "model":       K2_MODEL,
+                "messages":    [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
+                "max_tokens":  K2_MAX_TOKENS,
             },
             headers={"Authorization": f"Bearer {K2_API_KEY}"},
             timeout=K2_TIMEOUT_S,
         )
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"]
-        return _validate_answer(_extract_json(content))
-    except Exception as exc:
-        # WARN: K2 failover to Claude is a degraded path but still a valid answer.
-        _log("k2", f"failed → falling back to Claude: {exc}", "warn")
+    except httpx.TimeoutException:
+        _log("k2", f"timeout after {K2_TIMEOUT_S}s → falling back to Claude", "warn")
         return None
+    except Exception as exc:
+        _log("k2", f"request error ({type(exc).__name__}): {exc} → falling back to Claude", "warn")
+        return None
+
+    if r.status_code != 200:
+        # Surface a slice of the actual response body — one-look debugging
+        # instead of "HTTP 400" staring at you with no context.
+        body_preview = (r.text or "")[:200].replace("\n", " ")
+        _log("k2", f"HTTP {r.status_code} body={body_preview!r} → falling back to Claude", "warn")
+        return None
+
+    try:
+        data = r.json()
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, ValueError) as exc:
+        _log("k2", f"unexpected response shape ({exc}) → falling back to Claude", "warn")
+        return None
+
+    try:
+        result = _validate_answer(_extract_json(content))
+    except ValueError as exc:
+        # Log content length + first 200 chars so we can tell truncation
+        # ("emitted 800 chars of reasoning and got cut off") vs genuinely
+        # non-JSON output ("emitted 80 chars that aren't JSON").
+        content_str = content or ""
+        preview = content_str[:200].replace("\n", " ")
+        _log(
+            "k2",
+            f"JSON extraction failed ({exc}) "
+            f"content[len={len(content_str)}]={preview!r} → falling back to Claude",
+            "warn",
+        )
+        return None
+
+    return result
 
 
 def call_claude(log_text: str, question: str) -> dict:
